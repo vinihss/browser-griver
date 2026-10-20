@@ -22,6 +22,7 @@
     "test:e2e:verifica": "node packages/extension/test/verifica-painel.e2e.mjs",
     "test:e2e:overlay": "node packages/extension/test/overlay.e2e.mjs",
     "test:e2e:nova": "node packages/extension/test/nova-receita.e2e.mjs",
+    "test:e2e:cli": "node packages/extension/test/record-cli.e2e.mjs",
     "test:e2e:all": "node packages/extension/test/e2e-all.mjs",
     "test:e2e:headless": "GRIVER_HEADLESS=1 node packages/extension/test/e2e-all.mjs",
     "test:e2e:headed": "GRIVER_HEADLESS=0 node packages/extension/test/e2e-all.mjs",

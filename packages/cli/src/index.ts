@@ -29,6 +29,17 @@ Comandos:
   schedule rm <id>          remove um agendamento
   history <id>              atalho para o histórico de revisões
   run <id|nome>             executa uma receita (--target, --driver, --headed, --var k=v)
+  run list                  lista as execuções recentes
+  run cancel <id>           cancela uma execução em andamento
+  page context              inspeciona a aba ativa (URL, título, elementos)
+  page click <seletor>      clica na aba ativa (--text "texto alternativo")
+  page fill <seletor> <valor> preenche um campo da aba ativa
+  page screenshot           captura a tela da aba ativa (--out arquivo.png)
+  record state              estado da gravação (idle, recording, paused)
+  record start              começa a gravar a aba ativa
+  record pause | resume     pausa e retoma a captura
+  record stop               para a gravação e mostra a receita (--out arquivo.json)
+  record discard            joga fora a gravação
   chat "<mensagem>"         conversa com o assistente de IA do OpenCode
 
 Opções globais:
@@ -86,6 +97,14 @@ async function main(): Promise<number> {
     case "run": {
       const { commandRun } = await import("./commands/run.js")
       return await commandRun(rest, json)
+    }
+    case "page": {
+      const { commandPage } = await import("./commands/page.js")
+      return await commandPage(rest, json)
+    }
+    case "record": {
+      const { commandRecord } = await import("./commands/record.js")
+      return await commandRecord(rest, json)
     }
     case "chat": {
       const { commandChat } = await import("./commands/chat.js")

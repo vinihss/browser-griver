@@ -34,6 +34,14 @@
       "types": "./dist/server-runner.d.ts",
       "default": "./dist/server-runner.js"
     },
+    "./rest": {
+      "types": "./dist/rest.d.ts",
+      "default": "./dist/rest.js"
+    },
+    "./ops": {
+      "types": "./dist/ops.d.ts",
+      "default": "./dist/ops.js"
+    },
     "./db": {
       "types": "./dist/db/index.d.ts",
       "default": "./dist/db/index.js"

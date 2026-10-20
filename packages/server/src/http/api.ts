@@ -9,7 +9,7 @@ import {
 import type { Repository } from "../db/repo.js"
 import type { RunManager } from "../runner/index.js"
 import type { TabRunCoordinator } from "../runner/tab.js"
-import type { RecordingBuffer } from "../recording/buffer.js"
+import type { RecordingBuffer, RecordingSnapshot } from "../recording/buffer.js"
 import type { ChatBridge } from "../opencode/bridge.js"
 import type { WsGateway } from "../ws/gateway.js"
 import { HttpError, type Router } from "./server.js"
@@ -282,22 +282,32 @@ export function registerApi(router: Router, ctx: ApiContext): Router {
   })
 
   // ── gravação ────────────────────────────────────────────────────────────
+  //
+  // Quem captura os eventos é a extensão: ela é que injeta o gravador na
+  // aba e manda cada evento. A API comanda — a extensão obedece — e o
+  // estado volta pelo WebSocket, como no fluxo do painel.
 
   router.get("/api/recording", () => recording.snapshot())
 
   router.post("/api/recording/start", async (request) => {
     const body = (await request.body()) as { projectId?: string } | undefined
-    // sem dona: a primeira extensão que mandar evento assume a gravação
-    return recording.start(undefined, body?.projectId)
+    return await comandarGravacao(gateway, recording, "start", body?.projectId)
   })
 
-  router.post("/api/recording/pause", () => recording.pause())
-  router.post("/api/recording/resume", () => recording.resume())
-  router.post("/api/recording/discard", () => recording.discard())
+  router.post("/api/recording/pause", async () => {
+    return await comandarGravacao(gateway, recording, "pause")
+  })
 
-  router.post("/api/recording/stop", () => {
-    const { snapshot, recipe } = recording.stop()
-    return { snapshot, recipe }
+  router.post("/api/recording/resume", async () => {
+    return await comandarGravacao(gateway, recording, "resume")
+  })
+
+  router.post("/api/recording/discard", async () => {
+    return await comandarGravacao(gateway, recording, "discard")
+  })
+
+  router.post("/api/recording/stop", async () => {
+    return await comandarGravacao(gateway, recording, "stop")
   })
 
   // ── chat ────────────────────────────────────────────────────────────────
@@ -410,5 +420,72 @@ async function listMessages(opencodeSessionId: string): Promise<unknown[]> {
     return await client.messages(opencodeSessionId)
   } catch {
     return []
+  }
+}
+
+/**
+ * Comanda a gravação e devolve o estado.
+ *
+ * Quem captura os eventos é a extensão: ela injeta o gravador na aba e
+ * manda cada evento. A API comanda — a extensão obedece — e o estado
+ * volta pelo WebSocket, como no fluxo do painel.
+ *
+ * Sem extensão conectada, o comando não tem quem o cumpra: a resposta diz
+ * isso (`commanded: false`) e o estado continua como estava.
+ */
+async function comandarGravacao(
+  gateway: WsGateway,
+  recording: RecordingBuffer,
+  action: "start" | "pause" | "resume" | "stop" | "discard",
+  projectId?: string,
+): Promise<{ snapshot: RecordingSnapshot; commanded: boolean; recipe?: Recipe }> {
+  const commanded = gateway.connectionCount > 0
+  if (commanded) {
+    gateway.broadcast({ type: "record.command", action, ...(projectId ? { projectId } : {}) })
+  }
+
+  switch (action) {
+    case "start": {
+      // a sessão é aberta aqui: quem manda eventos é a extensão, mas a
+      // gravação precisa de um lar antes do primeiro evento
+      recording.start(undefined, projectId)
+      // a extensão assume essa gravação quando ela confirmar pelo WebSocket
+      await esperar(async () => recording.snapshot().status === "recording", 2_000)
+      return { snapshot: recording.snapshot(), commanded }
+    }
+    case "pause": {
+      await esperar(async () => recording.snapshot().status === "paused", 1_000)
+      if (recording.snapshot().status === "recording") recording.pause()
+      return { snapshot: recording.snapshot(), commanded }
+    }
+    case "resume": {
+      await esperar(async () => recording.snapshot().status === "recording", 1_000)
+      if (recording.snapshot().status === "paused") recording.resume()
+      return { snapshot: recording.snapshot(), commanded }
+    }
+    case "discard": {
+      await esperar(async () => recording.snapshot().status === "idle", 1_000)
+      recording.discard()
+      return { snapshot: recording.snapshot(), commanded }
+    }
+    case "stop": {
+      // a extensão fecha a gravação e entrega a receita; a API espera
+      const terminou = await recording.waitFinished(3_000)
+      if (terminou) {
+        return { snapshot: recording.snapshot(), commanded, recipe: terminou.recipe }
+      }
+      // nenhuma extensão respondeu: encerra aqui mesmo
+      const { snapshot, recipe } = recording.stop()
+      return { snapshot, commanded, recipe }
+    }
+  }
+}
+
+/** Espera uma condição valer, até o prazo. */
+async function esperar(condicao: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
+  const limite = Date.now() + timeoutMs
+  while (Date.now() < limite) {
+    if (await condicao()) return
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
 }

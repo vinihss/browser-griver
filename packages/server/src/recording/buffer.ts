@@ -26,6 +26,8 @@ export class RecordingBuffer {
   private readonly sessions = new Map<string, RecordingSession>()
   /** extensão dona da gravação corrente */
   private corrente = SEM_CLIENTE
+  /** última gravação encerrada — quem chamou `stop` pelo HTTP precisa dela */
+  private ultimoFinalizado: { snapshot: RecordingSnapshot; recipe: Recipe } | undefined
 
   start(clientId: string | undefined, projectId?: string): RecordingSnapshot {
     const dono = clientId ?? SEM_CLIENTE
@@ -39,6 +41,9 @@ export class RecordingBuffer {
     }
     this.sessions.set(dono, session)
     this.corrente = dono
+    // uma gravação nova invalida a anterior: quem espera o fim não pode
+    // receber a receita de uma gravação velha
+    this.ultimoFinalizado = undefined
     return this.snapshot(dono)
   }
 
@@ -47,6 +52,25 @@ export class RecordingBuffer {
     if (session && session.status === "recording") session.status = "paused"
     if (session) session.updatedAt = Date.now()
     return this.snapshot(clientId)
+  }
+
+  /**
+   * Uma extensão assume a gravação.
+   *
+   * Quando a API abriu a gravação (por HTTP), a sessão não tem dona: a
+   * primeira extensão a falar dela a adota, em vez de criar outra — duas
+   * sessões fariam os passos se dividirem entre elas.
+   */
+  assumir(clientId: string, projectId?: string): RecordingSnapshot {
+    const semDono = this.sessions.get(SEM_CLIENTE)
+    if (semDono) {
+      this.sessions.delete(SEM_CLIENTE)
+      if (projectId) semDono.projectId = projectId
+      this.sessions.set(clientId, semDono)
+      this.corrente = clientId
+      return this.snapshot(clientId)
+    }
+    return this.start(clientId, projectId)
   }
 
   resume(clientId?: string): RecordingSnapshot {
@@ -73,7 +97,35 @@ export class RecordingBuffer {
     const recipe = this.toRecipe(session?.events ?? [])
     this.sessions.delete(dono)
     if (this.corrente === dono) this.corrente = SEM_CLIENTE
+    this.ultimoFinalizado = { snapshot, recipe }
     return { snapshot, recipe }
+  }
+
+  /**
+   * A última gravação encerrada.
+   *
+   * Quem parou a gravação foi a extensão (por WebSocket), mas quem pediu
+   * o `stop` foi a API — ela precisa da receita pronta, e a extensão já
+   * levou a sua parte.
+   */
+  get ultima(): { snapshot: RecordingSnapshot; recipe: Recipe } | undefined {
+    return this.ultimoFinalizado
+  }
+
+  /**
+   * Espera a gravação corrente terminar.
+   *
+   * A extensão confirma o `stop` pelo WebSocket; a API espera esse
+   * instante para devolver a receita. Sem confirmação no prazo, quem
+   * chama decide o que fazer.
+   */
+  async waitFinished(timeoutMs: number): Promise<{ snapshot: RecordingSnapshot; recipe: Recipe } | undefined> {
+    const limite = Date.now() + timeoutMs
+    while (Date.now() < limite) {
+      if (this.ultimoFinalizado) return this.ultimoFinalizado
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    return undefined
   }
 
   discard(clientId?: string): RecordingSnapshot {
@@ -81,6 +133,8 @@ export class RecordingBuffer {
     const snapshot = this.snapshot(clientId)
     this.sessions.delete(dono)
     if (this.corrente === dono) this.corrente = SEM_CLIENTE
+    // descartar é jogar fora: a receita da gravação anterior não vale mais
+    this.ultimoFinalizado = undefined
     return snapshot
   }
 

@@ -18,11 +18,35 @@ servidor local pela API REST. No Code Mode elas aparecem agrupadas:
 
 - `tools.griver.recipe_list` — descubra projetos e receitas
 - `tools.griver.recipe_get` — leia uma receita antes de mexer
+- `tools.griver.recipe_new` — crie uma receita vazia (é o começo de um fluxo)
 - `tools.griver.recipe_patch` — aplique mudanças (add / update / remove / move)
+- `tools.griver.recipe_update` — renomeie ou troque o alvo
+- `tools.griver.recipe_delete` — apague (o usuário aprova)
 - `tools.griver.recipe_validate` — confira se a receita vale para o alvo
+- `tools.griver.recipe_history` / `recipe_restore` — revisões
+- `tools.griver.recipe_export` — gere o código Playwright ou Firecrawl
+- `tools.griver.project_list` / `project_create` / `project_delete` — projetos
 - `tools.griver.page_context` — veja a aba ativa (URL, título, elementos e seletores)
 - `tools.griver.page_click` / `tools.griver.page_fill` — aja na aba (o usuário aprova)
+- `tools.griver.page_screenshot` — capture a tela da aba
+- `tools.griver.record_start` / `record_pause` / `record_resume` / `record_stop`
+  / `record_discard` / `record_state` — grave a aba: a interação vira passo
 - `tools.griver.run` — execute a receita
+- `tools.griver.run_list` / `run_get` / `run_cancel` — acompanhe execuções
+- `tools.griver.schedule_list` / `schedule_add` / `schedule_remove` — agendamentos
+
+## Gravar é gravar pelo terminal
+
+O `record_start` comanda a extensão, que captura o que o usuário faz na
+aba — exatamente como a gravação do painel. Duas formas de montar a
+receita, e elas se misturam:
+
+- **dirigir**: você age com `page_click`/`page_fill` e monta os passos com
+  `recipe_patch` — cada passo é explícito, e você sabe o que gravou.
+- **gravar**: `record_start`, o usuário interage, `record_stop` devolve a
+  receita pronta. Aí o passo gravado é o que o browser realmente fez.
+
+As duas juntas são mais fortes: grave a interação e depois ajuste os passos.
 
 ## Regras
 
@@ -43,6 +67,11 @@ servidor local pela API REST. No Code Mode elas aparecem agrupadas:
 7. **Alvo `os` é mais restrito.** `select`, `hover`, `upload`, `script` e
    `screenshot` não existem no alvo `os` (Firecrawl). Avise o usuário quando
    uma mudança não puder ser aplicada nesse alvo.
+8. **Uma receita nova começa vazia.** `recipe_new` cria sem passos; quem
+   decide o conteúdo é o passo seguinte — `recipe_patch` ou a gravação.
+9. **Gravar exige a extensão.** `record_start` só funciona com a extensão
+   carregada no Chrome: sem ela, o comando volta com `commanded: false` e
+   não há o que gravar.
 
 ## Estilo
 

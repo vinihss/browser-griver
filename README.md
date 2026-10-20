@@ -203,13 +203,56 @@ griver recipe diff <id> <revisão>               # compara com uma revisão
 griver recipe restore <id> <revisão>            # volta para uma revisão
 griver run <receita> [--target browser|os] [--driver playwright|cdp]
                        [--headed] [--var k=v] [--json]
+griver run list                                 # execuções recentes
+griver run cancel <id>                          # cancela uma execução
 griver schedule list|add|rm                     # agendamentos por cron
+griver page context                             # inspeciona a aba ativa
+griver page click <seletor> [--text "texto"]    # clica na aba ativa
+griver page fill <seletor> <valor>              # preenche um campo
+griver page screenshot [--out arquivo.png]      # captura a tela
+griver record state|start|pause|resume|stop|discard
 griver chat "adicione um passo que extraia o preço"
 ```
 
 `griver run` roda sem o servidor no ar — ele abre o banco e executa direto.
 Para aproveitar a sessão logada do navegador, use `--driver cdp` com um Chrome
 aberto em `--remote-debugging-port=9222`.
+
+`griver run list` e `griver run cancel` falam com o **servidor**: o histórico
+das execuções mora lá, junto com a extensão que as rodou.
+
+### Operar o Griver pelo terminal
+
+`page` e `record` falam com o **servidor local**, e não com o banco: quem
+age na aba é a extensão, e quem manda nela é o servidor. Por isso eles
+precisam do servidor no ar (`griver serve`) e da extensão carregada no
+Chrome.
+
+O `record` é a mesma gravação do painel, com o mesmo resultado: o terminal
+comanda, a extensão captura e a receita volta pronta.
+
+```sh
+griver record start                    # começa a gravar a aba ativa
+griver page click "#login-email"       # a interação vira passo da receita
+griver page fill "#login-email" "ana@exemplo.com"
+griver record stop                     # imprime a receita (--out arquivo.json)
+griver record stop --out receita.json  # salva a receita em arquivo
+```
+
+O `griver recipe set <id> --file receita.json` leva a receita gravada para
+o servidor.
+
+### O mesmo toolset no MCP
+
+O assistente e a linha de comando usam a **mesma camada de operações**
+(`packages/server/src/ops.ts`): uma ação do Griver não pode se comportar de
+um jeito no terminal e de outro no assistente. São 29 ferramentas no MCP
+(`griver_recipe_new`, `griver_page_click`, `griver_record_start`…), com o
+mesmo resultado e o mesmo texto de erro.
+
+O que o MCP acrescenta à linha de comando é a conversa: o assistente escolhe
+a ferramenta, pede a aprovação das ações que agem na página (`page_click`,
+`page_fill`, `run`, `recipe_delete`…) e monta a receita passo a passo.
 
 ### Servidores órfãos
 
@@ -285,11 +328,23 @@ inspecionar a aba e disparar execuções.
 |---|---|
 | `griver_recipe_list` | lista projetos e receitas |
 | `griver_recipe_get` | lê uma receita |
+| `griver_recipe_new` | cria uma receita vazia |
+| `griver_recipe_update` / `griver_recipe_delete` | renomeia, troca o alvo, apaga |
 | `griver_recipe_patch` | adiciona, altera, remove ou move passos |
 | `griver_recipe_validate` | valida contra o alvo |
+| `griver_recipe_history` / `griver_recipe_restore` | revisões da receita |
+| `griver_recipe_export` | gera o código Playwright ou Firecrawl |
+| `griver_project_list` / `griver_project_create` / `griver_project_delete` | projetos |
 | `griver_page_context` | inspeciona a aba ativa |
 | `griver_page_click` / `griver_page_fill` | age na aba — **pede aprovação** |
-| `griver_run` | executa uma receita |
+| `griver_page_screenshot` | captura a tela da aba |
+| `griver_record_start` / `pause` / `resume` / `stop` / `discard` / `state` | grava a aba |
+| `griver_run` / `griver_run_list` / `griver_run_get` / `griver_run_cancel` | execuções |
+| `griver_schedule_list` / `griver_schedule_add` / `griver_schedule_remove` | agendamentos |
+
+As ferramentas que agem na página ou destroem alguma coisa pedem
+aprovação: `page_click`, `page_fill`, `run`, `recipe_delete`, `project_delete`
+e `schedule_remove`.
 
 O servidor MCP precisa do build (`pnpm build`) e do servidor do Griver no
 ar. O token é o mesmo da extensão — `<projeto>/data/token` — e o endereço
@@ -304,6 +359,10 @@ packages/cli         binário `griver`
 packages/extension   extensão MV3 (esbuild + TypeScript, sem framework)
 .opencode/agents/griver.md  agente do assistente
 ```
+
+A camada de operações (`packages/server/src/ops.ts`) é o meio-termo: o MCP
+(`packages/server/src/mcp/`) e a linha de comando (`packages/cli/`) chamam as
+mesmas funções, então o comportamento é o mesmo nos dois canais.
 
 O `@griver/core` não importa nada do Node: a extensão e o servidor usam o
 **mesmo** schema, o **mesmo** interpretador e o **mesmo** protocolo.

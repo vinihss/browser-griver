@@ -47,6 +47,7 @@ const TESTES = [
   "verifica-painel",
   "overlay",
   "nova-receita",
+  "record-cli",
   "panel-save",
   "uso-real",
   "erro-gravacao",

@@ -185,6 +185,30 @@ projeto padrão chamado "Meus scripts" (criado uma única vez).
 - **Remover**: Selecione a receita e clique no botão "Remover"
 - **Exportar**: Clique em "Exportar" para copiar o código compilado
 
+### 7. **Operando o Griver fora do painel**
+
+A extensão é controlada por três canais, e todos passam pelo servidor local:
+
+| Canal | Como |
+|---|---|
+| **Painel** | a tela de edição da extensão (a que está aberta) |
+| **Linha de comando** | `griver page …`, `griver record …`, `griver run list` |
+| **Assistente (MCP)** | `griver_page_click`, `griver_record_start`, `griver_recipe_new`… |
+
+O painel e o terminal dividem a mesma gravação: quem comanda é o servidor, e
+quem captura os eventos é a extensão. Por isso a CLI precisa do servidor no
+ar e da extensão carregada no Chrome.
+
+```sh
+griver record start                    # a mesma gravação do painel
+griver page click "#login-email"
+griver record stop                     # a receita volta pronta
+```
+
+O servidor MCP registra o `griver` em `opencode.json` e expõe 29
+ferramentas — as mesmas operações que a CLI usa, com o mesmo resultado e o
+mesmo texto de erro.
+
 ---
 
 ## 📁 Estrutura de Arquivos
@@ -196,7 +220,12 @@ projeto padrão chamado "Meus scripts" (criado uma única vez).
 │   │   ├── src/               # Fonte TypeScript
 │   │   └── dist/              # Arquivos compilados
 │   ├── server/                # Backend Node.js
-│   │   └── src/               # Fonte TypeScript
+│   │   └── src/
+│   │       ├── rest.ts        # Cliente REST (token em cascata, retry no 401)
+│   │       ├── ops.ts         # Operações do Griver (fonte única)
+│   │       ├── mcp/           # Ferramentas do MCP
+│   │       └── ...            # Fonte TypeScript
+│   ├── cli/                   # Binário `griver`
 │   └── core/                  # Biblioteca compartilhada
 ├── start-all.sh               # Script para iniciar tudo
 ├── griver-extension.zip       # Extensão compactada

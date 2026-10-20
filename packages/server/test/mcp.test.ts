@@ -55,12 +55,34 @@ test("o catálogo traz as ferramentas do Griver", () => {
   for (const esperado of [
     "recipe_list",
     "recipe_get",
+    "recipe_new",
+    "recipe_update",
+    "recipe_delete",
     "recipe_patch",
     "recipe_validate",
+    "recipe_history",
+    "recipe_restore",
+    "recipe_export",
+    "project_list",
+    "project_create",
+    "project_delete",
     "page_context",
     "page_click",
     "page_fill",
+    "page_screenshot",
+    "record_state",
+    "record_start",
+    "record_pause",
+    "record_resume",
+    "record_stop",
+    "record_discard",
     "run",
+    "run_list",
+    "run_get",
+    "run_cancel",
+    "schedule_list",
+    "schedule_add",
+    "schedule_remove",
   ]) {
     assert.ok(nomes.includes(esperado), `falta a ferramenta ${esperado}`)
   }
@@ -125,6 +147,93 @@ test("ferramenta desconhecida é erro de protocolo", async () => {
   })
   assert.ok(resposta?.error)
   assert.equal(resposta.error.code, -32602)
+})
+
+/** Chama uma ferramenta e devolve o JSON do conteúdo. */
+async function chamarFerramenta(
+  chamar: (requisicao: RequisicaoMcp) => Promise<RespostaMcp | undefined>,
+  nome: string,
+  args: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const resposta = await chamar({
+    jsonrpc: "2.0",
+    id: 99,
+    method: "tools/call",
+    params: { name: nome, arguments: args },
+  })
+  assert.ok(resposta?.result, `a ferramenta ${nome} não respondeu`)
+  const resultado = resposta.result as { content: { text: string }[]; isError?: boolean }
+  assert.notEqual(resultado.isError, true, `a ferramenta ${nome} falhou: ${resultado.content[0]?.text}`)
+  return JSON.parse(resultado.content[0]!.text) as Record<string, unknown>
+}
+
+/**
+ * O ciclo completo de uma receita pelo assistente: criar, adicionar
+ * passos, renomear, exportar, listar o histórico e apagar.
+ */
+test("o assistente cria, edita e apaga uma receita", async () => {
+  await comServidor(async (chamar) => {
+    const projeto = await chamarFerramenta(chamar, "project_create", { name: "Do MCP" })
+    const projectId = (projeto.project as { id: string }).id
+
+    const criada = await chamarFerramenta(chamar, "recipe_new", {
+      name: "Receita nova",
+      projectId,
+      target: "browser",
+    })
+    const recipeId = (criada.recipe as { id: string }).id
+    assert.ok(recipeId)
+
+    const editada = await chamarFerramenta(chamar, "recipe_patch", {
+      recipeId,
+      ops: [
+        {
+          op: "add",
+          step: { type: "navigate", url: "https://exemplo.com" },
+        },
+      ],
+      name: "Receita renomeada",
+    })
+    assert.equal(editada.steps, 1)
+
+    const lida = await chamarFerramenta(chamar, "recipe_get", { recipeId })
+    const resumo = lida.summary as { name: string }
+    assert.equal(resumo.name, "Receita renomeada")
+    const corpo = lida.body as { steps: unknown[] }
+    assert.equal(corpo.steps.length, 1)
+
+    const exportada = await chamarFerramenta(chamar, "recipe_export", { recipeId })
+    assert.match(String(exportada.code), /exemplo\.com/)
+
+    const historico = await chamarFerramenta(chamar, "recipe_history", { recipeId })
+    assert.ok(Array.isArray(historico.revisions))
+
+    await chamarFerramenta(chamar, "recipe_delete", { recipeId })
+    const depois = await chamarFerramenta(chamar, "recipe_list", { projectId })
+    const receitas = depois.recipes as { id: string }[]
+    assert.equal(receitas.find((r) => r.id === recipeId), undefined)
+  })
+})
+
+test("a ferramenta de criar usa o primeiro projeto quando nenhum é informado", async () => {
+  await comServidor(async (chamar) => {
+    await chamarFerramenta(chamar, "project_create", { name: "Único" })
+    const criada = await chamarFerramenta(chamar, "recipe_new", { name: "Sem projeto" })
+    const receita = criada.recipe as { id: string; projectId: string }
+    assert.ok(receita.id)
+    assert.ok(receita.projectId)
+  })
+})
+
+test("os comandos de gravação existiam mesmo sem extensão conectada", async () => {
+  await comServidor(async (chamar) => {
+    const estado = await chamarFerramenta(chamar, "record_state")
+    assert.equal(estado.status, "idle")
+
+    // sem extensão, o comando não tem quem o cumpra: a resposta diz isso
+    const inicio = await chamarFerramenta(chamar, "record_start")
+    assert.equal(inicio.commanded, false)
+  })
 })
 
 /**

@@ -139,6 +139,14 @@ export type ServerMessage =
   | { type: "record.state"; state: RecordingState; steps: number; projectId?: string }
   | { type: "record.step"; event: RecordedEvent }
   | { type: "record.finished"; recipeId?: string; stepCount: number; recipe?: Recipe }
+  /**
+   * Comando de gravação vindo do servidor.
+   *
+   * Quem captura os eventos é a extensão: o servidor manda o comando e ela
+   * liga (ou desliga) a captura na aba ativa. É o que permite gravar a
+   * partir da linha de comando ou de uma ferramenta do assistente.
+   */
+  | { type: "record.command"; action: "start" | "pause" | "resume" | "stop" | "discard"; projectId?: string }
   | { type: "run.started"; run: RunSummary }
   | { type: "run.event"; runId: string; event: StepEvent }
   | { type: "run.finished"; run: RunSummary }

@@ -7,7 +7,11 @@
       "permissions": [
         { "action": "*", "resource": "*", "effect": "allow" },
         { "action": "griver_page_click", "resource": "*", "effect": "ask" },
-        { "action": "griver_page_fill", "resource": "*", "effect": "ask" }
+        { "action": "griver_page_fill", "resource": "*", "effect": "ask" },
+        { "action": "griver_run", "resource": "*", "effect": "ask" },
+        { "action": "griver_recipe_delete", "resource": "*", "effect": "ask" },
+        { "action": "griver_project_delete", "resource": "*", "effect": "ask" },
+        { "action": "griver_schedule_remove", "resource": "*", "effect": "ask" }
       ]
     }
   },

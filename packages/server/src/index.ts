@@ -163,7 +163,9 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
       // uma aba com os de outra.
 
       case "record.start": {
-        const snapshot = recording.start(client.id, message.projectId)
+        // se a API já abriu a gravação, esta extensão a adota em vez de
+        // criar outra: duas sessões dividiriam os passos
+        const snapshot = recording.assumir(client.id, message.projectId)
         wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,

@@ -189,7 +189,7 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
       return true
 
     case "panel:record": {
-      void handleOverlayAction(String(message.action) as OverlayAction).catch((error) => {
+      void handleRecordAction(String(message.action) as OverlayAction).catch((error) => {
         // sem isso a gravação falharia em silêncio e o painel não saberia
         const texto = error instanceof Error ? error.message : String(error)
         console.error("[griver] falha no comando de gravação:", error)
@@ -234,7 +234,7 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
     }
 
     case INTERNAL.overlayCommand: {
-      void handleOverlayAction(String(message.action) as OverlayAction).catch((error) => {
+      void handleRecordAction(String(message.action) as OverlayAction).catch((error) => {
         const texto = error instanceof Error ? error.message : String(error)
         console.error("[griver] falha no comando do overlay:", error)
         broadcast({
@@ -257,10 +257,11 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
 // a ela — o primeiro passo de uma receita costuma ser justamente navegar.
 // Por isso o estado fica aqui, e o content script só captura eventos.
 
-async function handleOverlayAction(action: OverlayAction): Promise<void> {
+/** Comandos de gravação: do painel, da barra na página ou do servidor. */
+async function handleRecordAction(action: OverlayAction, projectId?: string): Promise<void> {
   switch (action) {
     case "start":
-      await startRecording()
+      await startRecording(projectId)
       return
     case "pause":
       await pauseRecording()
@@ -278,7 +279,7 @@ async function handleOverlayAction(action: OverlayAction): Promise<void> {
 }
 
 /** Começa a gravação na aba da página. */
-async function startRecording(): Promise<void> {
+async function startRecording(projectId?: string): Promise<void> {
   const tab = await abaDaPagina()
   if (!tab?.id) throw new Error("nenhuma aba de página aberta")
 
@@ -300,7 +301,11 @@ async function startRecording(): Promise<void> {
   await sendRecordCommand(tab.id, "start")
 
   // o servidor precisa saber que a gravação começou antes de receber eventos
-  ws.send({ type: "record.start", projectId: currentProjectId, tabId: tab.id })
+  ws.send({
+    type: "record.start",
+    projectId: projectId ?? currentProjectId,
+    tabId: tab.id,
+  })
   watchNavigation(tab.id)
 
   // a URL inicial é o primeiro passo da receita
@@ -584,6 +589,25 @@ async function handleServerMessage(message: { type: string; [key: string]: unkno
     case "record.state": {
       state.recordingSteps = Number(message.steps ?? 0)
       await pushOverlayState()
+      return
+    }
+
+    // comando de gravação vindo do servidor (linha de comando ou assistente)
+    case "record.command": {
+      const action = String(message.action) as
+        | "start"
+        | "pause"
+        | "resume"
+        | "stop"
+        | "discard"
+      // uma gravação já em andamento não é reiniciada: quem mandou o
+      // comando provavelmente quer a que está rodando
+      if (action === "start" && state.recording) {
+        await pushOverlayState()
+        return
+      }
+      const projectId = typeof message.projectId === "string" ? message.projectId : undefined
+      await handleRecordAction(action === "discard" ? "cancel" : action, projectId)
       return
     }
 
