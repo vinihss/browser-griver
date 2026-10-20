@@ -6,15 +6,11 @@ import { TabDriver, injectRecorder } from "./tab-driver.js"
 
 type PanelMessage = { type: string; [key: string]: unknown }
 
-/** Estado que o overlay desenha. */
+/** Estado que a barra de gravação desenha na página. */
 interface OverlayState {
   visible: boolean
   recording: boolean
   paused: boolean
-  steps: number
-  events: RecordedEvent[]
-  recipe?: Recipe
-  confirmed: boolean
 }
 
 // ── estado do service worker ────────────────────────────────────────────────
@@ -29,10 +25,15 @@ const state = {
   lastServerMessages: [] as unknown[],
   /** eventos capturados durante a gravação (a fonte é o servidor) */
   recordingEvents: [] as RecordedEvent[],
-  /** receita pronta, enviada pelo servidor ao parar a gravação */
+  /**
+   * Receita pronta que ainda não tinha painel aberto para recebê-la.
+   *
+   * A gravação termina e a receita vai direto para a tela de edição do
+   * painel. Se nenhum painel estiver conectado no momento, ela fica aqui e
+   * é entregue na próxima conexão — gravar não pode se perder por o painel
+   * estar fechado.
+   */
   recordedRecipe: undefined as Recipe | undefined,
-  /** o usuário confirmou a gravação no overlay */
-  recordingConfirmed: false,
 }
 
 const ws = new WsClient({
@@ -273,16 +274,6 @@ async function handleOverlayAction(action: OverlayAction): Promise<void> {
     case "cancel":
       await cancelRecording()
       return
-    case "confirm":
-      state.recordingConfirmed = true
-      await pushOverlayState()
-      return
-    case "edit":
-      await openDraftInPanel()
-      return
-    case "save":
-      await openDraftInPanel(true)
-      return
   }
 }
 
@@ -303,7 +294,6 @@ async function startRecording(): Promise<void> {
   state.recordingSteps = 0
   state.recordingEvents = []
   state.recordedRecipe = undefined
-  state.recordingConfirmed = false
   state.recordingTabId = tab.id
 
   await injectRecorder(tab.id)
@@ -344,8 +334,9 @@ async function resumeRecording(): Promise<void> {
 /**
  * Para a gravação.
  *
- * O overlay continua visível com os passos capturados: o usuário ainda pode
- * editar ou salvar a receita.
+ * A barra some da página assim que a captura encerra: os passos gravados
+ * vão para a tela de edição do painel quando o servidor manda a receita
+ * pronta (`record.finished`).
  */
 async function stopRecording(): Promise<void> {
   if (!state.recording) return
@@ -371,7 +362,7 @@ async function stopRecording(): Promise<void> {
   await pushOverlayState()
 }
 
-/** Descarta a gravação: some com o overlay e com os passos capturados. */
+/** Descarta a gravação: some com a barra e com os passos capturados. */
 async function cancelRecording(): Promise<void> {
   const tabId = state.recordingTabId
   const estavaGravando = state.recording
@@ -384,25 +375,10 @@ async function cancelRecording(): Promise<void> {
   state.recordingSteps = 0
   state.recordingEvents = []
   state.recordedRecipe = undefined
-  state.recordingConfirmed = false
   removeNavigationWatch()
 
   if (estavaGravando) ws.send({ type: "record.discard" })
   await pushOverlayState()
-}
-
-/** Manda o rascunho da gravação para o painel abrir o editor. */
-async function openDraftInPanel(save = false): Promise<void> {
-  const recipe = state.recordedRecipe
-  if (!recipe) return
-
-  // salvar abre o modal: a receita inteira vai junto, senão os passos
-  // gravados se perdem no caminho
-  broadcast(
-    save
-      ? { type: "panel:openAddScript", recipe }
-      : { type: "panel:openEditor", recipe },
-  )
 }
 
 let currentProjectId = ""
@@ -446,17 +422,17 @@ async function sendRecordCommand(tabId: number, action: "start" | "pause" | "res
 
 // ── estado do overlay ───────────────────────────────────────────────────────
 
-/** Monta o estado que o overlay desenha. */
+/**
+ * Monta o estado que a barra desenha.
+ *
+ * A barra só existe enquanto a captura está ativa: quando a gravação para,
+ * o overlay some da página — ele não fica preso na tela esperando um clique.
+ */
 function overlayState(): OverlayState {
-  const hasDraft = state.recordedRecipe !== undefined
   return {
-    visible: state.recording || hasDraft,
+    visible: state.recording,
     recording: state.recording,
     paused: state.recordingPaused,
-    steps: state.recordingSteps,
-    events: state.recordingEvents,
-    recipe: state.recordedRecipe,
-    confirmed: state.recordingConfirmed,
   }
 }
 
@@ -618,11 +594,22 @@ async function handleServerMessage(message: { type: string; [key: string]: unkno
     }
 
     case "record.finished": {
-      state.recordedRecipe = message.recipe as Recipe | undefined
+      const recipe = message.recipe as Recipe | undefined
       state.recording = false
       state.recordingPaused = false
       removeNavigationWatch()
+      // a barra some da página junto com a captura
       await pushOverlayState()
+
+      if (!recipe?.steps.length) return
+      // a receita gravada vai direto para a tela de edição do painel — sem
+      // modal e sem lista de passos presa na página
+      if (panelPorts.size > 0) {
+        broadcast({ type: "panel:openEditor", recipe })
+        state.recordedRecipe = undefined
+      } else {
+        state.recordedRecipe = recipe
+      }
       return
     }
   }
@@ -678,6 +665,17 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => {
     panelPorts.delete(port)
   })
+
+  // a gravação terminou enquanto nenhum painel estava aberto: a receita
+  // pronta é entregue agora, na primeira conexão que aparecer
+  const pendente = state.recordedRecipe
+  if (!pendente) return
+  try {
+    port.postMessage({ type: "panel:openEditor", recipe: pendente })
+    state.recordedRecipe = undefined
+  } catch {
+    // o painel pode ter fechado no meio: fica para a próxima conexão
+  }
 })
 
 function broadcast(message: PanelMessage): void {

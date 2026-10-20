@@ -71,38 +71,39 @@ pnpm dev:server
 ## Usando a extensão
 
 O painel lateral mostra **uma tela por vez**, alternada pelos botões do
-cabeçalho: **☰ Receitas**, **✦ Chat** e **⚙ Ajustes**. O **+** abre o modal
-*Add New Script* (só o nome — a URL é a da página em que você está, e vira o
-`startUrl` da receita).
+cabeçalho: **☰ Receitas**, **✦ Chat** e **⚙ Ajustes**.
 
-**Receitas** — lista as receitas do servidor, todas elas, sem filtro de
-projeto. Cada linha traz o título e dois botões: **✎** edita e **▶** executa
-na aba atual. O editor em JSON aparece abaixo da lista quando uma receita está
-selecionada, com estes botões:
+**Receitas** — a tela principal é só a lista das receitas do servidor, todas
+elas, sem filtro de projeto. Cada linha traz o título e dois botões: **✎**
+edita e **▶** executa na aba atual.
 
-- *Salvar* — grava o JSON editado
+Para criar ou alterar, clica-se numa linha — ou no **+** do cabeçalho — e a
+**tela de edição** abre, com o campo **Nome**, o editor em JSON e os botões:
+
+- *Salvar* — cria a receita (se é nova) ou grava o JSON editado. Não há campo
+  de URL: a `startUrl` é a da página em que você está
 - *Validar* — confere se os passos existem no alvo escolhido
 - *Executar aqui* — roda na aba atual
 - *Exportar* — copia o código Playwright/Firecrawl gerado
-- *Remover* — apaga a receita
+- *Remover* — apaga a receita (ou descarta a gravação, se ainda não salva)
 
-O botão **● Gravar** aparece quando há uma receita aberta — editando uma ou
-criando uma nova — porque é ela que recebe os passos gravados. Ele não é uma
-tela: injeta um **overlay na própria página**, e é de lá que a gravação é
-controlada:
+O botão **● Gravar** fica no cabeçalho da própria tela de edição — gravar é
+uma ação sobre a receita que está aberta. Ele não é uma tela: injeta uma
+**barra de controle na página**, e é de lá que a gravação também é controlada:
 
 1. Abra a página e clique em **● Gravar**
 2. Interaja normalmente — cliques, digitação, seleções e teclas são capturados
-3. A lista **Steps** do overlay mostra os passos em tempo real
-4. **⏺ / ⏸** na barra pausa e retoma a captura sem perder o contexto
-5. **⏹ Stop** encerra e deixa a receita pronta
-6. **✎** ao lado de *Steps* abre o rascunho no editor do painel
-7. **Save** no overlay abre o modal *Add New Script* com a receita gravada
+3. O contador *gravando · N passos* corre na tela de edição, e a página pode
+   ser fechada e reaberta sem perder a captura
+4. **⏸ / ⏺** na barra pausa e retoma a captura sem perder o contexto
+5. **⏹ Stop** — na barra ou na tela de edição — encerra a gravação
+6. A barra some da página e os passos abrem sozinhos na tela de edição, para
+   ajustar antes de salvar
 
-O overlay sobrevive a navegações: o estado da gravação mora no service worker,
-não na página. É por isso que o primeiro passo — quase sempre a URL inicial —
-não se perde. Cada navegação entra na receita como passo `navigate` e senhas
-viram `{{secret}}` em vez do valor real.
+A barra de gravação sobrevive a navegações: o estado da gravação mora no
+service worker, não na página. É por isso que o primeiro passo — quase sempre
+a URL inicial — não se perde. Cada navegação entra na receita como passo
+`navigate` e senhas viram `{{secret}}` em vez do valor real.
 
 **Chat** — conversa com o assistente. Ele lê e edita receitas, inspeciona a
 aba e executa ações no browser **mediante sua aprovação**.

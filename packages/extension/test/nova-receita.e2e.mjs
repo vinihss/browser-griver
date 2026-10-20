@@ -1,11 +1,12 @@
 /**
- * Teste do fluxo completo do modal "Add New Script".
+ * Teste do fluxo de criar uma receita na tela dedicada de edição.
  *
- * Grava uma receita, para, abre o modal pelo `+` do painel, preenche só o
- * Name e confere se a receita chega ao servidor com o `startUrl` da página
- * em que o teste está — não há campo de URL no modal.
+ * Clica no `+` do painel — em vez do antigo modal, a tela de edição abre
+ * com Nome, editor JSON, ações e o botão "● Gravar". Preenche só o nome e
+ * confere se a receita chega ao servidor com o `startUrl` da página em que
+ * o teste está — não há campo de URL em nenhum lugar do fluxo.
  *
- * Uso: node packages/extension/test/modal.e2e.mjs <serverUrl>
+ * Uso: node packages/extension/test/nova-receita.e2e.mjs <serverUrl>
  */
 import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"
@@ -16,7 +17,7 @@ import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, opcoesDoN
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
 
-const userDataDir = mkdtempSync(join(tmpdir(), "griver-modal-"))
+const userDataDir = mkdtempSync(join(tmpdir(), "griver-nova-"))
 const siteDir = mkdtempSync(join(tmpdir(), "griver-site-"))
 const pagina = join(siteDir, "a.html")
 writeFileSync(
@@ -36,7 +37,7 @@ const context = await chromium.launchPersistentContext(userDataDir, {
 })
 
 // a URL da página em que o teste está: é ela que a receita guarda como
-// `startUrl`, já que o modal não tem mais campo de URL
+// `startUrl`, já que o fluxo não tem campo de URL
 const urlEsperada = `file://${pagina}`
 
 fecharAoFalhar(context)
@@ -84,16 +85,10 @@ const token = await panel.evaluate(async () => {
 })
 console.log("1. token obtido:", token ? "sim" : "NÃO")
 
-// ── o "+" abre o modal? ─────────────────────────────────────────────────────
-// o modal só existe na tela de Receitas: volta para lá antes de abrir
-await panel.evaluate(() => {
-  document.querySelector('.panel-header button[title="Receitas"]')?.click()
-})
-await panel.waitForTimeout(600)
-
+// ── o "+" abre a tela de edição? ────────────────────────────────────────────
 // o clique pode cair durante um redesenho do painel: tenta algumas vezes
-let modal = { ok: false, campos: [] }
-for (let tentativa = 0; tentativa < 5 && !modal.ok; tentativa++) {
+let tela = { ok: false, campos: [], botoes: [], modal: false }
+for (let tentativa = 0; tentativa < 5 && !tela.ok; tentativa++) {
   await panel.evaluate(() => {
     document
       .querySelector(
@@ -102,23 +97,32 @@ for (let tentativa = 0; tentativa < 5 && !modal.ok; tentativa++) {
       ?.click()
   })
   await panel.waitForTimeout(400)
-  modal = await panel.evaluate(() => {
-    const el = document.querySelector(".modal")
-    if (!el) return { ok: false, campos: [] }
-    const campos = Array.from(el.querySelectorAll("input")).map((i) => i.placeholder)
-    return { ok: true, campos }
+  tela = await panel.evaluate(() => {
+    if (document.querySelector(".modal")) return { ok: false, campos: [], botoes: [], modal: true }
+    const campos = Array.from(document.querySelectorAll(".view input")).map(
+      (i) => i.placeholder,
+    )
+    const temEditor = Boolean(document.querySelector(".view textarea"))
+    const botoes = Array.from(document.querySelectorAll(".view button")).map(
+      (b) => b.textContent?.trim(),
+    )
+    return { ok: temEditor && campos.length === 1, campos, botoes, modal: false }
   })
 }
-console.log("2. modal aberto:", modal.ok ? "sim" : "NÃO", modal.campos?.join(", ") ?? "")
+console.log("2. tela de edição aberta:", tela.ok ? "sim" : "NÃO", tela.campos?.join(", ") ?? "")
+console.log("2. botões da tela:", tela.botoes?.join(", ") ?? "(nenhum)")
+console.log("2. alguma modal na tela:", tela.modal ? "SIM" : "não")
+
+// o gravar mora na tela de edição, não na lista
+const temGravar = tela.botoes?.some((b) => b?.includes("Gravar")) ?? false
+console.log("2. botão Gravar na tela:", temGravar ? "sim" : "NÃO")
 
 // ── preencher e salvar ──────────────────────────────────────────────────────
-// o modal é recriado a cada redesenho do painel: preenche e confere que os
-// valores sobreviveram, senão o clique no Save acha outro elemento
+// a tela é recriada a cada redesenho do painel: preenche e confere que o
+// valor sobreviveu, senão o clique no Salvar acha outro elemento
 const nome = `Script do teste ${Date.now()}`
 const preencheu = await panel.evaluate((nome) => {
-  const el = document.querySelector(".modal")
-  if (!el) return false
-  const campos = el.querySelectorAll("input")
+  const campos = document.querySelectorAll(".view input")
   // só o nome: a URL da página é a fonte do `startUrl`
   if (campos.length !== 1) return false
   const nameInput = campos[0]
@@ -129,16 +133,15 @@ const preencheu = await panel.evaluate((nome) => {
 console.log("3. campos preenchidos:", preencheu ? "sim" : "NÃO")
 await panel.waitForTimeout(400)
 
-// o clique precisa acertar o modal atual
 const salvou = await panel.evaluate(() => {
-  const botao = Array.from(document.querySelectorAll(".modal button")).find(
-    (b) => b.textContent?.trim() === "Save",
+  const botao = Array.from(document.querySelectorAll(".view button")).find(
+    (b) => b.textContent?.trim() === "Salvar",
   )
   if (!botao) return false
   botao.click()
   return true
 })
-console.log("4. botão Save acionado:", salvou ? "sim" : "NÃO")
+console.log("4. botão Salvar acionado:", salvou ? "sim" : "NÃO")
 await panel.waitForTimeout(1500)
 
 const aviso = await panel.evaluate(
@@ -168,7 +171,16 @@ const checada = await panel.evaluate(async ([tk, alvo, base]) => {
 
 console.log("4. receita no servidor:", checada.ok ? "sim" : `NÃO (${checada.motivo})`)
 console.log("5. startUrl:", checada.startUrl)
-console.log("6. passos:", checada.passos)// ── a lista do painel mostra a receita nova? ────────────────────────────────
+console.log("6. passos:", checada.passos)
+
+// ── voltar para a lista mostra a receita nova? ──────────────────────────────
+// depois de salvar a tela continua na edição: a lista só aparece quando o
+// usuário clica em voltar
+await panel.evaluate(() => {
+  document.querySelector('button[aria-label="Voltar para a lista"]')?.click()
+})
+await panel.waitForTimeout(600)
+
 const naLista = await panel.evaluate(
   (alvo) =>
     Array.from(document.querySelectorAll(".recipe-row .truncate")).some(
@@ -196,10 +208,13 @@ console.log("\nerros de runtime:", erros.length ? erros.join(" | ") : "nenhum")
 await context.close()
 
 const ok =
-  modal.ok &&
+  tela.ok &&
+  !tela.modal &&
+  temGravar &&
+  salvou &&
   checada.ok &&
   checada.startUrl === urlEsperada &&
   naLista &&
   erros.length === 0
-console.log(ok ? "\n✓ modal ok" : "\n✗ modal com problemas")
+console.log(ok ? "\n✓ nova receita ok" : "\n✗ nova receita com problemas")
 process.exit(ok ? 0 : 1)

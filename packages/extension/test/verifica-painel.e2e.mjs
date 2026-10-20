@@ -5,7 +5,7 @@
  *  - o painel renderiza sem erro de runtime (header, ações, avisos);
  *  - as receitas carregam sozinhas ao abrir;
  *  - a linha traz título truncado e os botões de editar/executar;
- *  - o botão "+" abre o modal "Add New Script";
+ *  - o botão "+" abre a tela dedicada de edição (sem modal);
  *  - o Chat alterna com Receitas no mesmo painel.
  *
  * Uso: node packages/extension/test/verifica-painel.e2e.mjs <serverUrl>
@@ -130,7 +130,7 @@ const acoes = await panel.evaluate(() => {
 console.log("5. botões de ação (Edit, Run):", acoes.ok ? "sim" : `NÃO (${JSON.stringify(acoes)})`)
 console.log("6. título truncado:", acoes.truncado ? "sim" : "NÃO")
 
-// ── 4. o "+" abre o modal Add New Script? ───────────────────────────────────
+// ── 4. o "+" abre a tela de edição? ─────────────────────────────────────────
 await panel.evaluate(() => {
   const botao = document.querySelector(
     '.panel-header button[title="Add New Script"], .panel-header button[aria-label="Add New Script"]',
@@ -139,21 +139,27 @@ await panel.evaluate(() => {
 })
 await panel.waitForTimeout(500)
 
-const modal = await panel.evaluate(() => {
-  const el = document.querySelector(".modal")
-  if (!el) return { ok: false, motivo: "sem modal" }
-  const labels = Array.from(el.querySelectorAll(".field-label")).map((l) => l.textContent?.trim())
-  const botoes = Array.from(el.querySelectorAll("button")).map((b) => b.textContent?.trim())
-  return { ok: true, labels, botoes }
-})
-console.log("7. modal Add New Script:", modal.ok ? `sim (${modal.labels.join(", ")} | ${modal.botoes.join(", ")})` : "NÃO")
-
-// fecha o modal
-await panel.evaluate(() => {
-  const botao = Array.from(document.querySelectorAll(".modal button")).find(
-    (b) => b.textContent?.trim() === "Cancel",
+const tela = await panel.evaluate(() => {
+  // a tela não é modal: não existe backdrop, e a lista continua embaixo
+  const modalAberto = Boolean(document.querySelector(".modal, .modal-backdrop"))
+  const labels = Array.from(document.querySelectorAll(".view .field-label")).map(
+    (l) => l.textContent?.trim(),
   )
-  botao?.click()
+  const botoes = Array.from(document.querySelectorAll(".view button")).map((b) =>
+    b.textContent?.trim(),
+  )
+  const temEditor = Boolean(document.querySelector(".view textarea"))
+  return { modalAberto, labels, botoes, temEditor }
+})
+console.log(
+  "7. tela de edição:",
+  tela.temEditor ? `sim (${tela.labels.join(", ")} | ${tela.botoes.join(", ")})` : "NÃO",
+)
+console.log("7. alguma modal na tela:", tela.modalAberto ? "SIM" : "não")
+
+// volta para a lista pelo botão da própria tela
+await panel.evaluate(() => {
+  document.querySelector('button[aria-label="Voltar para a lista"]')?.click()
 })
 await panel.waitForTimeout(300)
 
@@ -217,7 +223,9 @@ const ok =
   estrutura.temSecao === "Receitas" &&
   acoes.ok &&
   acoes.truncado &&
-  modal.ok &&
+  tela.temEditor &&
+  !tela.modalAberto &&
+  tela.botoes.includes("Salvar") &&
   chat.temConversa &&
   voltou &&
   erros.length === 0

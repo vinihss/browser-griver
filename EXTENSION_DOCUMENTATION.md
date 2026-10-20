@@ -44,57 +44,62 @@ O **Griver** é uma extensão Chrome para automação local de browser que permi
 ## 🗺️ Mapa de Telas
 
 O painel lateral tem **uma tela por vez**, alternada pelos botões do cabeçalho.
-A gravação acontece **dentro da página**, num overlay injetado.
+A lista de Receitas é a tela principal — o editor não fica embutido nela. A
+gravação acontece **dentro da página**, numa barra de controle injetada.
 
 ```
 ┌────────────────────────────────────┐
 │ [+]              ☰  ✦  ⚙  Connection│  ← cabeçalho
 ├────────────────────────────────────┤
-│ RECEITAS                    [● Gravar]│
+│ RECEITAS                           │  ← tela principal: só a lista
 │ ┌────────────────────────────────┐ │
 │ │ Carregar meus emails        ✎ ▶│ │  ← ✎ editar · ▶ executar
 │ │ Script 2                    ✎ ▶│ │
 │ └────────────────────────────────┘ │
-│                                    │
-│ [textarea com o JSON da receita]   │  ← só ao selecionar uma
-│ [Salvar][Validar][Executar][...]  │
 └────────────────────────────────────┘
 ```
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  ⏺ ⏸ ⏹              Cancel  Confirm     ← barra flutuante │
-│                                                         │
-│                            ┌───────────────────────┐    │
-│                            │ Steps            [✎]  │    │
-│                            │ 1. navigate           │    │
-│                            │ 2. click #email        │    │
-│                            │ [Cancel]        [Save] │    │
-│                            └───────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-       ↑ este overlay vive NA PÁGINA, não no painel
+┌────────────────────────────────────┐
+│ [←] Carregar meus emails  [● Gravar]│  ← tela de edição (o + ou o ✎ abre)
+├────────────────────────────────────┤
+│ NOME                               │
+│ [input com o nome da receita]      │
+│ SCRIPT DA RECEITA                  │
+│ [textarea com o JSON da receita]   │
+│ [Salvar][Validar][Executar][...]   │
+└────────────────────────────────────┘
+```
+
+```
+┌─────────────────────────────────────────┐
+│  ⏺ ⏸ ⏹                    Cancel       │  ← barra de gravação NA PÁGINA
+└─────────────────────────────────────────┘
+   ↑ só existe enquanto a captura corre; ao parar ela some
 ```
 
 ### Fluxo de Navegação:
 
 1. **Abrir extensão** → a tela de Receitas aparece com a lista carregada do servidor
 2. **☰ / ✦ / ⚙** no cabeçalho → alterna entre Receitas, Chat e Ajustes
-3. **✎ numa receita** → carrega a receita no editor (JSON) abaixo da lista
+3. **✎ numa receita** → abre a tela de edição da receita (Nome + JSON + ações)
 4. **▶ numa receita** → executa na aba atual
-5. **+ no cabeçalho** → abre o modal "Add New Script" (só Name)
+5. **+ no cabeçalho** → abre a tela de edição para uma receita nova
+6. **← na tela de edição** → volta para a lista
 
 ### Fluxo de gravação:
 
-1. **● Gravar** no painel → o overlay aparece na aba ativa
-2. **Interaja com a página** → os passos aparecem na lista "Steps" do overlay
+1. **● Gravar** na tela de edição → a barra de gravação aparece na aba ativa
+2. **Interaja com a página** → o contador *gravando · N passos* corre na tela
+   de edição
 3. **⏸ / ⏺** na barra → pausa e retoma a captura
-4. **⏹ Stop** → a gravação para e a receita fica pronta
-5. **✎** ao lado de "Steps" → abre o rascunho no editor do painel
-6. **Save** no overlay → abre o modal "Add New Script" com a receita gravada
+4. **⏹ Stop** → na barra ou na tela de edição → a gravação para
+5. A barra some da página e os passos abrem sozinhos na tela de edição
+6. Ajuste o JSON se quiser e clique em **Salvar**
 
-> O overlay sobrevive a navegações: o estado da gravação mora no service
-> worker, não na página. É por isso que o primeiro passo de uma receita — que
-> quase sempre é uma navegação — não se perde.
+> A barra de gravação sobrevive a navegações: o estado da gravação mora no
+> service worker, não na página. É por isso que o primeiro passo de uma
+> receita — que quase sempre é uma navegação — não se perde.
 
 ---
 
@@ -121,12 +126,12 @@ bash start-all.sh
 ### 2. **Criando um Novo Script**
 
 1. Clique no ícone do Griver para abrir o painel
-2. Clique no botão **+** do cabeçalho
-3. Preencha **Name**
+2. Clique no botão **+** do cabeçalho — a tela de edição abre
+3. Preencha **Nome**
    - a URL da página em que você está vira o `startUrl` da receita — a página
      onde ela começa
-4. Clique em **Save**
-5. A receita aparece na lista de Receitas
+4. Clique em **Salvar**
+5. **←** volta para a lista, com a receita nova
 
 A receita é criada no projeto ativo; se não houver nenhum, o Griver usa um
 projeto padrão chamado "Meus scripts" (criado uma única vez).
@@ -134,26 +139,25 @@ projeto padrão chamado "Meus scripts" (criado uma única vez).
 ### 3. **Gravando uma Receita**
 
 1. Abra a página que você quer automatizar
-2. No painel, clique em **● Gravar**
-3. O overlay aparece **dentro da página**:
-   - a barra superior tem Record/Pause, Stop, Cancel e Confirm
-   - o painel "Steps" lista os passos capturados em tempo real
+2. No painel, clique em **+** (ou no ✎ de uma receita existente) e depois em
+   **● Gravar** no cabeçalho da tela de edição
+3. Uma barra de gravação aparece **dentro da página**:
+   - os botões são Record/Pause, Stop e Cancel
+   - a página não tem lista de passos: o contador corre na tela de edição
 4. Interaja com a página (cliques, preenchimentos, navegações)
    - a gravação sobrevive a navegações: o primeiro passo é a URL inicial
-5. Clique em **⏹ Stop** quando terminar
-6. Clique em **✎** ao lado de "Steps" para abrir o rascunho no editor do painel
+5. Clique em **⏹ Stop** — na barra ou na tela de edição
+6. A barra some da página e os passos abrem sozinhos na tela de edição
 7. Ajuste o JSON se quiser e clique em **Salvar**
-8. O modal "Add New Script" abre — preencha o **Name** e confirme
 
 ### 4. **Criando uma Receita do Zero**
 
-1. Clique no botão **+** do cabeçalho
-2. Preencha **Name**
+1. Clique no botão **+** do cabeçalho — a tela de edição abre
+2. Preencha **Nome**
    - a URL da página em que você está vira o `startUrl` da receita
-3. Clique em **Save**
-4. A receita é criada vazia e o editor de código abre com o JSON
-5. Escreva os passos da receita
-6. Clique em **Salvar** para gravar no servidor
+3. Escreva os passos no editor, ou grave com **● Gravar**
+4. Clique em **Salvar** para gravar no servidor
+5. **←** volta para a lista
 
 ### 5. **Executando uma Receita**
 
@@ -269,15 +273,16 @@ O `start-all.sh` já executa esse passo automaticamente (etapa `1b️⃣`).
 ```bash
 pnpm run dev:server              # em um terminal
 pnpm run test:e2e:verifica       # em outro
-pnpm run test:e2e:overlay        # o overlay dentro da página
-pnpm run test:e2e:modal          # o modal Add New Script
+pnpm run test:e2e:overlay        # a barra de gravação dentro da página
+pnpm run test:e2e:nova           # criar uma receita na tela de edição
 ```
 
-O `verifica` confere header, botões de ação, título truncado, o modal e a
-alternância com o Chat. O `overlay` cobre o ponto mais arriscado: a gravação
-precisa sobreviver a uma navegação.
+O `verifica` confere header, botões de ação, título truncado, a tela de
+edição e a alternância com o Chat. O `overlay` cobre o ponto mais arriscado:
+a gravação precisa sobreviver a uma navegação — e, ao parar, a barra some da
+página sem deixar nada preso nela.
 
-### Overlay não aparece na página
+### Barra de gravação não aparece na página
 
 1. Confirme que a página é `http`/`https`/`file` — `chrome://` não aceita
    extensão
@@ -301,23 +306,24 @@ conectadas ao mesmo servidor: feche as outras abas do Chrome.
 ## 🧭 Navegação entre telas
 
 ```
-┌──────────────────────────────────────────┐
+┌──────────────────────────────────────────────┐
 │ [+]            ☰ Receitas  ✦ Chat  ⚙ Ajustes │
-└──────────────────────────────────────────┘
+└──────────────────────────────────────────────┘
       │            │          │         │
       ▼            ▼          ▼         ▼
-   modal      lista de     conversa   servidor
-  Add New     receitas                 e token
-   Script
+  tela de      lista de    conversa   servidor
+   edição      receitas                e token
 ```
 
 O painel tem **uma tela por vez**, alternada pelos botões do cabeçalho. O
-`+` abre o modal; o **☰** traz a lista de receitas; o **✦** o chat; o **⚙** os
-ajustes. O botão **● Gravar** fica na seção de Receitas, e só aparece quando
-há uma receita aberta — é ela que recebe os passos gravados.
+`+` abre a tela de edição de uma receita nova; o **☰** traz a lista de
+receitas; o **✦** o chat; o **⚙** os ajustes. O **✎** de cada linha abre a
+mesma tela de edição — é ali que ficam Nome, o editor JSON, os botões de
+ação e o **● Gravar**. O **←** da tela de edição volta para a lista.
 
-A gravação não vive no painel: ela vira um **overlay dentro da página**, e é
-de lá que se controla a captura.
+A gravação não vive no painel: ela vira uma **barra de controle dentro da
+página**, e é de lá que também se controla a captura. Quando a gravação para,
+a barra some da página e os passos abrem na tela de edição.
 
 ---
 

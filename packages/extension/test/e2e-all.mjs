@@ -46,7 +46,7 @@ const PERFIL_PARADO_MS = 120_000
 const TESTES = [
   "verifica-painel",
   "overlay",
-  "modal",
+  "nova-receita",
   "panel-save",
   "uso-real",
   "erro-gravacao",

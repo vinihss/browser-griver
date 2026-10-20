@@ -43,7 +43,7 @@ await panel.evaluate(async () => {
 })
 await panel.waitForTimeout(1500)
 
-// uma receita aberta: é ela que dá origem ao botão de gravar
+// a tela de edição: é ela que traz o "● Gravar"
 await panel.evaluate(() => {
   document.querySelector('.panel-header button[title="Receitas"]')?.click()
 })
@@ -56,23 +56,10 @@ await panel.evaluate(() => {
     ?.click()
 })
 await panel.waitForTimeout(600)
-await panel.evaluate((nome) => {
-  const input = document.querySelector(".modal")?.querySelector("input")
-  if (!input) return
-  input.value = nome
-  input.dispatchEvent(new Event("input", { bubbles: true }))
-}, `Erro ${Date.now()}`)
-await panel.waitForTimeout(300)
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".modal button"))
-    .find((b) => b.textContent?.trim() === "Save")
-    ?.click()
-})
-await panel.waitForTimeout(1500)
 
 // sem aba de página aberta, gravar é impossível: precisa avisar
 await panel.evaluate(() => {
-  Array.from(document.querySelectorAll("button"))
+  Array.from(document.querySelectorAll(".view button"))
     .find((b) => b.textContent?.trim() === "● Gravar")
     ?.click()
 })

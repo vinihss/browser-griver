@@ -57,13 +57,26 @@ export interface AppState {
   runEvents: { path: string; type: string; status: string; error?: string }[]
   notice: { text: string; kind: "info" | "error" } | undefined
   busy: boolean
-  /** modal "Add New Script" aberto */
-  showAddScript: boolean
+  /**
+   * Tela de edição da receita aberta (a tela dedicada, não uma modal).
+   *
+   * Com ela fechada, a aba Receitas mostra só a lista. O `+` do cabeçalho e
+   * o `✎` de cada linha abrem esta tela — e é nela que ficam o editor, o
+   * botão Salvar e o "● Gravar".
+   */
+  editorOpen: boolean
+  /**
+   * Nome digitado na tela de edição.
+   *
+   * A tela é redesenhada a cada mensagem do servidor: sem guardar o valor,
+   * o que a pessoa digitou sumiria.
+   */
+  recipeName: string
   /**
    * Receita sendo editada sem estar salva no servidor.
    *
-   * É o que a gravação produz: o `✎` do overlay abre este rascunho no editor
-   * para o usuário ajustar antes de salvar.
+   * É o que a gravação produz: quando a gravação termina, o rascunho abre
+   * na tela de edição para o usuário ajustar antes de salvar.
    */
   draftRecipe: Recipe | undefined
 }
@@ -93,7 +106,8 @@ export const state: AppState = {
   runEvents: [],
   notice: undefined,
   busy: false,
-  showAddScript: false,
+  editorOpen: false,
+  recipeName: "",
   draftRecipe: undefined,
 }
 

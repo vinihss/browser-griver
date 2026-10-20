@@ -2,7 +2,7 @@ import { h, clear } from "./dom.js"
 import { state, patch, subscribe, setNotice, type TabId } from "./state.js"
 import { loadRecipes } from "./api.js"
 import { refreshProjects, settingsView } from "./views/projects.js"
-import { recipesView, addScriptModal } from "./views/recipes.js"
+import { recipesView, openNewRecipe } from "./views/recipes.js"
 import { chatView } from "./views/chat.js"
 import { sendToServer } from "./messaging.js"
 import type { Recipe, ServerMessage } from "@griver/core"
@@ -45,12 +45,6 @@ function render(): void {
   }
   root.appendChild(body)
 
-  // o modal é do painel, não de uma tela: o `+` do cabeçalho abre em
-  // qualquer uma delas
-  if (state.showAddScript) {
-    root.appendChild(addScriptModal())
-  }
-
   if (state.notice) {
     root.appendChild(
       h("div", { class: `notice notice-${state.notice.kind}` }, state.notice.text),
@@ -64,8 +58,8 @@ function render(): void {
 /**
  * Cabeçalho do painel.
  *
- * À esquerda o `+` (novo script), à direita o estado da conexão e o toggle
- * entre Receitas e Chat.
+ * À esquerda o `+` (nova receita, que abre a tela de edição), à direita o
+ * estado da conexão e o toggle entre Receitas e Chat.
  */
 function panelHeader(): HTMLElement {
   const statusLabel =
@@ -84,7 +78,7 @@ function panelHeader(): HTMLElement {
         class: "icon-btn",
         title: "Add New Script",
         "aria-label": "Add New Script",
-        onclick: () => patch({ showAddScript: true }),
+        onclick: openNewRecipe,
       },
       "+",
     ),
@@ -176,12 +170,13 @@ function onRuntimeMessage(message: Record<string, unknown>): void {
     return
   }
 
-  // o overlay pediu para abrir a receita gravada no editor do painel
+  // a gravação terminou: a receita gravada abre na tela de edição
   if (message.type === "panel:openEditor") {
     const recipe = message.recipe as Recipe | undefined
     if (!recipe) return
     patch({
       tab: "receitas",
+      editorOpen: true,
       // a receita aberta continua aberta: a gravação preenche os passos
       // dela, em vez de criar outra sem querer
       draftRecipe: recipe,
@@ -190,17 +185,6 @@ function onRuntimeMessage(message: Record<string, unknown>): void {
       recipeEpoch: state.recipeEpoch + 1,
       recipeDirty: true,
       recipeIssues: [],
-    })
-    return
-  }
-
-  // o overlay pediu para salvar: o modal abre com a receita gravada
-  if (message.type === "panel:openAddScript") {
-    const recipe = message.recipe as Recipe | undefined
-    patch({
-      tab: "receitas",
-      showAddScript: true,
-      draftRecipe: recipe,
     })
     return
   }
@@ -292,10 +276,10 @@ function handleServerMessage(message: ServerMessage): void {
       })
       return
     case "record.finished": {
-      // a receita pronta fica no overlay; o painel só avisa
+      // os passos foram para a tela de edição; o painel só avisa
       setNotice(
         message.recipe?.steps.length
-          ? `Gravação concluída: ${message.recipe.steps.length} passos prontos para salvar.`
+          ? `Gravação concluída: ${message.recipe.steps.length} passos abertos na tela de edição.`
           : "Gravação concluída, mas nenhum passo foi capturado.",
         message.recipe?.steps.length ? "info" : "error",
       )

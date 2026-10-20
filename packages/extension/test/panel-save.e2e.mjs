@@ -1,8 +1,9 @@
 /**
  * Teste end-to-end do fluxo de gravar e salvar uma receita.
  *
- * Reproduz o caminho de uma pessoa: clica em "● Gravar" no painel, interage
- * com a página, para a gravação pelo overlay, edita no painel e salva — e
+ * Reproduz o caminho de uma pessoa: cria a receita na tela de edição, clica
+ * em "● Gravar" ali mesmo, interage com a página, para a gravação pela barra
+ * da página — os passos abrem sozinhos na tela de edição — edita e salva, e
  * confere se os passos gravados realmente chegaram ao servidor.
  *
  * Uso: node packages/extension/test/panel-save.e2e.mjs <serverUrl> [targetUrl]
@@ -91,9 +92,8 @@ const projeto = await panel.evaluate(async ([tk, base]) => {
 }, [token, serverUrl])
 console.log("3. projeto criado:", projeto.id ? "sim" : "não")
 
-// ── 3. a receita nasce antes da gravação ───────────────────────────────────
-// o botão de gravar só existe com uma receita aberta: é ela que recebe os
-// passos gravados. O modal pede só o nome — a URL vem da página.
+// ── 3. a receita nasce na tela de edição ───────────────────────────────────
+// o "+" abre a tela de edição — Nome, editor JSON, ações e o "● Gravar"
 const nomeReceita = "Minha receita"
 await panel.evaluate(() => {
   document
@@ -104,15 +104,15 @@ await panel.evaluate(() => {
 })
 await panel.waitForTimeout(600)
 await panel.evaluate((nome) => {
-  const input = document.querySelector(".modal")?.querySelector("input")
+  const input = document.querySelector(".view input")
   if (!input) return
   input.value = nome
   input.dispatchEvent(new Event("input", { bubbles: true }))
 }, nomeReceita)
 await panel.waitForTimeout(300)
 await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".modal button"))
-    .find((b) => b.textContent?.trim() === "Save")
+  Array.from(document.querySelectorAll(".view button"))
+    .find((b) => b.textContent?.trim() === "Salvar")
     ?.click()
 })
 await panel.waitForTimeout(1500)
@@ -122,7 +122,7 @@ const page = await context.newPage()
 await page.goto(targetUrl)
 await page.waitForTimeout(600)
 
-// a gravação começa pelo painel, mas acontece na aba da página
+// a gravação começa pela tela de edição, mas acontece na aba da página
 await page.bringToFront()
 await panel.evaluate(() => {
   Array.from(document.querySelectorAll("button"))
@@ -132,12 +132,12 @@ await panel.evaluate(() => {
 await panel.waitForTimeout(1200)
 console.log("4. gravação iniciada")
 
-// o overlay tem que estar na página
-const overlay = await page.evaluate(() => {
+// a barra tem que estar na página
+const barra = await page.evaluate(() => {
   const host = document.querySelector("[data-griver-overlay]")
   return Boolean(host?.shadowRoot)
 })
-console.log("5. overlay na página:", overlay ? "sim" : "NÃO")
+console.log("5. barra na página:", barra ? "sim" : "NÃO")
 
 await page.click("#nome")
 await page.fill("#nome", "Vinicius")
@@ -145,7 +145,7 @@ await page.selectOption("#plano", "pro")
 await page.click("#enviar")
 await page.waitForTimeout(1200)
 
-// ── 4. parar a gravação pelo overlay ───────────────────────────────────────
+// ── 5. parar a gravação pela barra da página ────────────────────────────────
 await page.bringToFront()
 await page.evaluate(() => {
   const root = document.querySelector("[data-griver-overlay]")?.shadowRoot
@@ -158,32 +158,30 @@ await panel.waitForTimeout(1500)
 const aviso = await panel.evaluate(() => document.querySelector(".notice")?.textContent?.trim())
 console.log("6. aviso ao parar:", aviso)
 
-const passosNoOverlay = await page.evaluate(() => {
-  const root = document.querySelector("[data-griver-overlay]")?.shadowRoot
-  return Array.from(root?.querySelectorAll(".griver-step") ?? []).map((s) => s.textContent?.trim())
-})
-console.log("7. passos no overlay:", passosNoOverlay.length ? passosNoOverlay.join(" | ") : "(nenhum)")
+// a barra não tem mais lista de passos, e some da página ao parar
+const estadoDaPagina = await page.evaluate(() => ({
+  temBarra: Boolean(document.querySelector("[data-griver-overlay]")),
+  temPassos: Boolean(
+    document.querySelector("[data-griver-overlay]")?.shadowRoot?.querySelector(".griver-step"),
+  ),
+}))
+console.log(
+  "7. página sem nada preso:",
+  !estadoDaPagina.temBarra && !estadoDaPagina.temPassos ? "sim" : `NÃO (${JSON.stringify(estadoDaPagina)})`,
+)
 
-// ── 5. abrir o editor no painel pelo ✎ do overlay ──────────────────────────
-await page.bringToFront()
-await page.evaluate(() => {
-  const root = document.querySelector("[data-griver-overlay]")?.shadowRoot
-  Array.from(root?.querySelectorAll(".griver-icon-btn") ?? [])
-    .find((b) => b.title === "Editar")
-    ?.click()
-})
-await panel.waitForTimeout(1000)
-
+// ── 6. os passos abriram sozinhos na tela de edição? ────────────────────────
 const editor = await panel.evaluate(() => {
   const textarea = document.querySelector("textarea.code")
   if (!textarea) return { ok: false }
   const receita = JSON.parse(textarea.value)
   return { ok: true, passos: receita.steps?.length ?? -1 }
 })
-console.log("8. editor no painel:", editor.ok ? "sim" : "NÃO", `(${editor.passos} passos)`)
+console.log("8. tela de edição com os passos:", editor.ok ? "sim" : "NÃO", `(${editor.passos} passos)`)
 
-// ── 6. editar o JSON e salvar ──────────────────────────────────────────────
-// a receita já existe e está aberta: "Salvar" grava nela, sem modal
+// ── 7. editar o JSON e salvar ──────────────────────────────────────────────
+// a receita já existe e está aberta na tela de edição: "Salvar" grava nela,
+// e nenhuma modal entra no caminho
 const editou = await panel.evaluate(async () => {
   const editor = document.querySelector("textarea.code")
   if (!editor) return { ok: false, motivo: "sem editor" }
@@ -192,7 +190,7 @@ const editou = await panel.evaluate(async () => {
   editor.value = JSON.stringify(receita, null, 2)
   editor.dispatchEvent(new Event("input", { bubbles: true }))
   await new Promise((r) => setTimeout(r, 100))
-  Array.from(document.querySelectorAll("button"))
+  Array.from(document.querySelectorAll(".view button"))
     .find((b) => b.textContent?.trim() === "Salvar")
     ?.click()
   await new Promise((r) => setTimeout(r, 400))
@@ -244,6 +242,12 @@ for (const passo of passos) {
 }
 
 // ── 8. executar a receita na aba e conferir o resultado ────────────────────
+// a tela de edição ainda está aberta: volta para a lista para rodar pela
+// linha, como um usuário faria
+await panel.evaluate(() => {
+  document.querySelector('button[aria-label="Voltar para a lista"]')?.click()
+})
+await panel.waitForTimeout(600)
 await page.bringToFront()
 await panel.evaluate(() => {
   Array.from(document.querySelectorAll(".recipe-row"))

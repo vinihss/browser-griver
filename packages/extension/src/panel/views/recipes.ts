@@ -17,57 +17,69 @@ import { sendToServer } from "../messaging.js"
 
 /** textarea do editor — mantido entre renders para não perder o foco. */
 let editorElement: HTMLTextAreaElement | undefined
-/** chave da receita que o editor está mostrando */
+/** campo do nome — mantido entre renders pelo mesmo motivo. */
+let nameElement: HTMLInputElement | undefined
+/** chave da receita que a tela está editando */
 let editorKey = ""
-/**
- * Valores digitados no modal.
- *
- * O painel é redesenhado a cada mensagem do servidor, e o modal é recriado
- * junto — sem guardar os valores, o que a pessoa digitou sumiria.
- */
-let addScriptName = ""
 
-/** Identifica o que o editor está editando agora. */
+/** Identifica o que a tela está editando agora. */
 function currentEditorKey(): string {
   const alvo = state.selectedRecipeId || (state.draftRecipe ? "rascunho" : "")
   return `${alvo}#${state.recipeEpoch}`
 }
 
+/** Receita vazia, no formato em que ela é salva. */
+function receitaVazia(): string {
+  return JSON.stringify({ version: 1 as const, steps: [] }, null, 2)
+}
+
+function ensureEditor(): HTMLTextAreaElement {
+  if (!editorElement) {
+    editorElement = h("textarea", {
+      class: "textarea code",
+      spellcheck: "false",
+      rows: 14,
+      oninput: (event: Event) => {
+        state.recipeText = (event.target as HTMLTextAreaElement).value
+        patch({ recipeDirty: true })
+      },
+    })
+  }
+  return editorElement
+}
+
+function ensureNameField(): HTMLInputElement {
+  if (!nameElement) {
+    nameElement = h("input", {
+      class: "input",
+      placeholder: "Nome do script",
+      oninput: (event: Event) => {
+        // grava direto no estado, sem `patch`: cada tecla redesenharia a
+        // tela e o cursor voltaria ao começo do campo
+        state.recipeName = (event.target as HTMLInputElement).value
+      },
+    })
+  }
+  return nameElement
+}
+
 /**
- * Tela de Receitas: lista plana das receitas salvas no servidor.
+ * Tela de Receitas — duas telas, uma por vez.
  *
- * Cada linha traz o título (truncado) e dois botões: editar e executar.
+ * A lista é a tela principal: só as receitas do servidor. O editor não fica
+ * embutido nela; ele é uma tela dedicada, aberta pelo `+` do cabeçalho ou
+ * pelo `✎`/clique de cada linha — e é ali que ficam Nome, o JSON, as
+ * ações e o botão **● Gravar**.
  */
 export function recipesView(): HTMLElement {
+  return state.editorOpen ? editorScreen() : listScreen()
+}
+
+/** Lista plana das receitas salvas no servidor. */
+function listScreen(): HTMLElement {
   const container = h("div", { class: "view" })
-
-  container.appendChild(
-    h(
-      "div",
-      { class: "row", style: "justify-content: space-between" },
-      h("div", { class: "section-title" }, "Receitas"),
-      // gravar só faz sentido com uma receita aberta: os passos capturados
-      // precisam de um lugar para ir
-      state.selectedRecipeId || state.draftRecipe
-        ? button(
-            "● Gravar",
-            () => {
-              void chrome.runtime.sendMessage({ type: "panel:record", action: "start" })
-              setNotice("Gravação iniciada. Interaja com a página.")
-            },
-            { variant: "primary", title: "Grava as ações na aba atual" },
-          )
-        : null,
-    ),
-  )
+  container.appendChild(h("div", { class: "section-title" }, "Receitas"))
   container.appendChild(recipeList())
-
-  // o editor aparece para uma receita salva ou para o rascunho da gravação
-  if (state.selectedRecipeId || state.draftRecipe) {
-    container.appendChild(editor())
-    container.appendChild(actions())
-  }
-
   return container
 }
 
@@ -128,13 +140,50 @@ function recipeList(): HTMLElement {
   return list
 }
 
-/** Carrega a receita no editor. */
+/**
+ * Abre a tela de edição para uma receita nova.
+ *
+ * Não existe modal: a tela já nasce com o campo Nome, o editor e os botões.
+ * Salvar cria a receita (a URL é a da página em que o usuário está) e a
+ * tela segue aberta, agora sobre a receita criada.
+ */
+export function openNewRecipe(): void {
+  // uma gravação esperando para ser salva não se perde num clique no "+"
+  if (state.draftRecipe) {
+    patch({ tab: "receitas", editorOpen: true })
+    return
+  }
+  patch({
+    tab: "receitas",
+    editorOpen: true,
+    selectedRecipeId: "",
+    recipeName: "",
+    recipeText: receitaVazia(),
+    recipeEpoch: state.recipeEpoch + 1,
+    recipeDirty: false,
+    recipeIssues: [],
+  })
+}
+
+/** Volta para a lista. */
+function closeEditor(): void {
+  patch({ editorOpen: false })
+  // a lista volta sempre fresca: a receita pode ter mudado enquanto a tela
+  // de edição estava aberta
+  loadRecipes()
+    .then((recipes) => patch({ recipes }))
+    .catch(() => undefined)
+}
+
+/** Carrega a receita e abre a tela de edição com ela. */
 async function openRecipe(id: string): Promise<void> {
   try {
     const found = await loadRecipe(id)
     patch({
+      editorOpen: true,
       selectedRecipeId: id,
       draftRecipe: undefined,
+      recipeName: found.summary.name,
       recipeText: JSON.stringify(found.body, null, 2),
       recipeEpoch: state.recipeEpoch + 1,
       recipeTarget: found.summary.target,
@@ -157,121 +206,94 @@ async function runRecipe(id: string): Promise<void> {
   }
 }
 
-/**
- * Modal "Add New Script".
- *
- * Só o nome. A URL é a da página em que o usuário está: a receita começa de
- * onde ele está, e não de um endereço digitado à mão — um endereço errado
- * era a receita indo para um lugar que ninguém pediu.
- */
-export function addScriptModal(): HTMLElement {
-  const nameInput = h("input", {
-    class: "input",
-    placeholder: "Nome do script",
-    value: addScriptName,
-    oninput: (event: Event) => {
-      addScriptName = (event.target as HTMLInputElement).value
-    },
-  }) as HTMLInputElement
+// ── tela de edição ──────────────────────────────────────────────────────────
 
-  const close = () => {
-    addScriptName = ""
-    patch({ showAddScript: false })
-  }
-  const save = async () => {
-    const name = nameInput.value.trim()
-    if (!name) {
-      setNotice("Dê um nome ao script.", "error")
-      return
-    }
-    // a URL corrente: a da gravação quando o modal veio dela, a da aba
-    // em que o usuário está nos demais casos
-    const url = state.draftRecipe?.startUrl ?? (await urlCorrente())
-    // o rascunho da gravação traz os passos capturados; sem rascunho, a
-    // receita começa vazia
-    const base = state.draftRecipe ?? { version: 1 as const, steps: [] }
-    const recipe: Recipe = {
-      ...base,
-      ...(url ? { startUrl: url } : {}),
-    }
-    try {
-      // o projeto ativo pode ter sido removido no servidor: a lista real é
-      // a fonte da verdade
-      const projetos = await loadProjects()
-      const existe = projetos.some((p) => p.id === state.selectedProjectId)
-      const projectId = existe
-        ? state.selectedProjectId
-        : await ensureDefaultProject()
-      const created = await createRecipe({
-        projectId,
-        name,
-        target: state.recipeTarget,
-        recipe,
-      })
-      const recipes = await loadRecipes()
-      addScriptName = ""
-      patch({
-        recipes,
-        selectedRecipeId: created.id,
-        draftRecipe: undefined,
-        recipeText: JSON.stringify(recipe, null, 2),
-        recipeEpoch: state.recipeEpoch + 1,
-        recipeDirty: false,
-        recipeIssues: [],
-        showAddScript: false,
-      })
-      setNotice(`Receita "${name}" criada.`)
-    } catch (error) {
-      setNotice(describeError(error), "error")
-    }
-  }
+function editorScreen(): HTMLElement {
+  const container = h("div", { class: "view" })
+  const novo = state.selectedRecipeId === ""
 
-  const backdrop = h(
-    "div",
-    {
-      class: "modal-backdrop",
-      onclick: (event: Event) => {
-        if (event.target === backdrop) close()
-      },
-    },
-    h(
-      "div",
-      { class: "modal" },
-      h("div", { class: "modal-title" }, "Add New Script"),
-      h("label", { class: "field" }, h("span", { class: "field-label" }, "Name"), nameInput),
-      h(
-        "div",
-        { class: "modal-actions" },
-        button("Save", () => void save(), { variant: "primary" }),
-        button("Cancel", close, { variant: "ghost" }),
-      ),
-    ),
-  )
+  const editor = ensureEditor()
+  const nameInput = ensureNameField()
 
-  return backdrop
-}
-
-function editor(): HTMLElement {
-  const wrapper = h("div", { class: "editor" })
-
-  if (!editorElement) {
-    editorElement = h("textarea", {
-      class: "textarea code",
-      spellcheck: "false",
-      rows: 14,
-      oninput: (event: Event) => {
-        state.recipeText = (event.target as HTMLTextAreaElement).value
-        patch({ recipeDirty: true })
-      },
-    })
-  }
-
-  // o texto só é reescrito quando a receita sendo editada muda — do contrário
-  // o cursor do usuário volta ao começo a cada tecla
+  // os campos só reescrevem o valor quando a receita sendo editada muda —
+  // do contrário o cursor do usuário volta ao começo a cada tecla
   if (editorKey !== currentEditorKey()) {
     editorKey = currentEditorKey()
-    editorElement.value = state.recipeText
+    editor.value = state.recipeText
+    nameInput.value = state.recipeName
   }
+
+  container.appendChild(screenHeader(novo))
+  container.appendChild(
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Nome"), nameInput),
+  )
+  container.appendChild(editorBox(editor))
+  container.appendChild(actions())
+  return container
+}
+
+/**
+ * Cabeçalho da tela de edição: voltar para a lista + gravação.
+ *
+ * O **● Gravar** mora aqui, e não mais na lista: gravar é uma ação sobre a
+ * receita que está aberta. Enquanto a captura corre, o mesmo espaço vira o
+ * contador de passos e o botão de parar — a página não tem mais nenhuma
+ * lista de passos presa nela.
+ */
+function screenHeader(novo: boolean): HTMLElement {
+  const gravacao = state.recording.active
+    ? h(
+        "div",
+        { class: "row" },
+        h(
+          "span",
+          { class: "badge badge-rec" },
+          `${state.recording.paused ? "pausado" : "gravando"} · ${state.recording.steps} passos`,
+        ),
+        button("⏹ Parar", stopGravacao, { title: "Encerra a gravação" }),
+      )
+    : button("● Gravar", startGravacao, {
+        variant: "primary",
+        title: "Grava as ações na aba atual",
+      })
+
+  return h(
+    "div",
+    { class: "row editor-top" },
+    h(
+      "div",
+      { class: "row editor-top-left" },
+      h(
+        "button",
+        {
+          class: "icon-btn",
+          title: "Voltar para a lista",
+          "aria-label": "Voltar para a lista",
+          onclick: closeEditor,
+        },
+        "←",
+      ),
+      h(
+        "span",
+        { class: "editor-heading" },
+        novo ? "Nova receita" : state.recipeName.trim() || "Receita",
+      ),
+    ),
+    gravacao,
+  )
+}
+
+function startGravacao(): void {
+  void chrome.runtime.sendMessage({ type: "panel:record", action: "start" })
+  setNotice("Gravação iniciada. Interaja com a página.")
+}
+
+function stopGravacao(): void {
+  void chrome.runtime.sendMessage({ type: "panel:record", action: "stop" })
+}
+
+function editorBox(editor: HTMLTextAreaElement): HTMLElement {
+  const wrapper = h("div", { class: "editor" })
 
   wrapper.appendChild(
     h(
@@ -281,7 +303,7 @@ function editor(): HTMLElement {
       state.recipeDirty ? h("span", { class: "badge badge-dirty" }, "alterado") : null,
     ),
   )
-  wrapper.appendChild(editorElement)
+  wrapper.appendChild(editor)
 
   if (state.recipeIssues.length) {
     const issues = h("div", { class: "issues" })
@@ -302,46 +324,89 @@ function editor(): HTMLElement {
   return wrapper
 }
 
+// ── ações da tela de edição ─────────────────────────────────────────────────
+
+/**
+ * Salva a receita da tela de edição.
+ *
+ * Sem id, cria (nome + URL da página); com id, atualiza a que já existe.
+ * O nome vem do campo da própria tela — era o único campo do antigo modal.
+ */
+async function saveRecipe(): Promise<void> {
+  const parsed = safeParseRecipe(parseJson(state.recipeText))
+  if (!parsed.success) {
+    setNotice("O JSON da receita está inválido.", "error")
+    return
+  }
+  const nome = state.recipeName.trim()
+  if (!nome) {
+    setNotice("Dê um nome ao script.", "error")
+    return
+  }
+
+  if (state.selectedRecipeId) {
+    try {
+      await updateRecipe(state.selectedRecipeId, {
+        name: nome,
+        recipe: parsed.data,
+        target: state.recipeTarget,
+      })
+      patch({ recipeDirty: false, recipeIssues: [] })
+      setNotice("Receita salva.")
+    } catch (error) {
+      setNotice(describeError(error), "error")
+    }
+    return
+  }
+
+  try {
+    // a URL da página em que o usuário está vira o `startUrl` — a receita
+    // começa de onde ele está, e não de um endereço digitado à mão. Um
+    // `startUrl` já escrito no JSON (o da gravação) tem prioridade.
+    const url = parsed.data.startUrl ?? state.draftRecipe?.startUrl ?? (await urlCorrente())
+    const recipe: Recipe = { ...parsed.data, ...(url ? { startUrl: url } : {}) }
+
+    // o projeto ativo pode ter sido removido no servidor: a lista real é
+    // a fonte da verdade
+    const projetos = await loadProjects()
+    const existe = projetos.some((p) => p.id === state.selectedProjectId)
+    const projectId = existe ? state.selectedProjectId : await ensureDefaultProject()
+    const created = await createRecipe({
+      projectId,
+      name: nome,
+      target: state.recipeTarget,
+      recipe,
+    })
+    const recipes = await loadRecipes()
+    patch({
+      recipes,
+      selectedRecipeId: created.id,
+      draftRecipe: undefined,
+      recipeName: nome,
+      recipeText: JSON.stringify(recipe, null, 2),
+      recipeEpoch: state.recipeEpoch + 1,
+      recipeDirty: false,
+      recipeIssues: [],
+    })
+    setNotice(`Receita "${nome}" criada.`)
+  } catch (error) {
+    setNotice(describeError(error), "error")
+  }
+}
+
 function actions(): HTMLElement {
   const row = h("div", { class: "row wrap" })
-  // um rascunho que ainda não está no servidor: só ele pede nome no modal
+  // um rascunho que ainda não está no servidor: ele precisa de nome para
+  // ser criado
   const rascunho = state.draftRecipe !== undefined && !state.selectedRecipeId
   // uma gravação esperando para ser salva em cima de uma receita que já
   // existe: "Remover" descarta a gravação, não apaga a receita
   const gravado = state.draftRecipe !== undefined && Boolean(state.selectedRecipeId)
+  // sem id não existe o que executar nem o que exportar: a receita ainda
+  // não foi salva
+  const semId = state.selectedRecipeId === ""
 
-  row.appendChild(
-    button(
-      "Salvar",
-      async () => {
-        const parsed = safeParseRecipe(parseJson(state.recipeText))
-        if (!parsed.success) {
-          setNotice("O JSON da receita está inválido.", "error")
-          return
-        }
-        // o rascunho da gravação ainda não tem onde ser salvo: o modal pede
-        // só o nome e cria a receita a partir do que foi gravado
-        if (rascunho) {
-          patch({
-            draftRecipe: parsed.data,
-            showAddScript: true,
-          })
-          return
-        }
-        try {
-          await updateRecipe(state.selectedRecipeId, {
-            recipe: parsed.data,
-            target: state.recipeTarget,
-          })
-          patch({ recipeDirty: false, recipeIssues: [] })
-          setNotice("Receita salva.")
-        } catch (error) {
-          setNotice(describeError(error), "error")
-        }
-      },
-      { variant: "primary" },
-    ),
-  )
+  row.appendChild(button("Salvar", () => void saveRecipe(), { variant: "primary" }))
 
   row.appendChild(
     button(
@@ -375,9 +440,7 @@ function actions(): HTMLElement {
           setNotice("O JSON da receita está inválido.", "error")
           return
         }
-        // um rascunho ainda não está no servidor: só faz sentido executar
-        // depois de salvo
-        if (rascunho) {
+        if (semId) {
           setNotice("Salve a receita antes de executar.", "error")
           return
         }
@@ -398,7 +461,7 @@ function actions(): HTMLElement {
     button(
       "Exportar",
       async () => {
-        if (rascunho) {
+        if (semId) {
           setNotice("Salve a receita antes de exportar.", "error")
           return
         }
@@ -413,44 +476,52 @@ function actions(): HTMLElement {
     ),
   )
 
-  row.appendChild(
-    button(
-      "Remover",
-      async () => {
-        // uma gravação ainda não salva: "Remover" descarta a gravação e
-        // devolve o texto que está no servidor — apagar a receita seria
-        // perder o que ela já tinha
-        if (rascunho || gravado) {
+  // uma receita nova não salva não tem nada a remover — o botão some
+  if (!semId || state.draftRecipe) {
+    row.appendChild(
+      button(
+        "Remover",
+        async () => {
+          // uma gravação ainda não salva: "Remover" descarta a gravação e
+          // devolve o texto que está no servidor — apagar a receita seria
+          // perder o que ela já tinha
+          if (rascunho || gravado) {
+            try {
+              const texto =
+                state.selectedRecipeId === ""
+                  ? receitaVazia()
+                  : JSON.stringify((await loadRecipe(state.selectedRecipeId)).body, null, 2)
+              patch({
+                draftRecipe: undefined,
+                recipeText: texto,
+                recipeEpoch: state.recipeEpoch + 1,
+                recipeDirty: false,
+              })
+              setNotice(rascunho ? "Rascunho descartado." : "Gravação descartada.")
+            } catch (error) {
+              setNotice(describeError(error), "error")
+            }
+            return
+          }
           try {
-            const texto =
-              state.selectedRecipeId === ""
-                ? ""
-                : JSON.stringify((await loadRecipe(state.selectedRecipeId)).body, null, 2)
+            await deleteRecipe(state.selectedRecipeId)
             patch({
-              draftRecipe: undefined,
-              recipeText: texto,
-              recipeEpoch: state.recipeEpoch + 1,
+              selectedRecipeId: "",
+              recipeName: "",
+              recipeText: "",
               recipeDirty: false,
+              editorOpen: false,
             })
-            setNotice(rascunho ? "Rascunho descartado." : "Gravação descartada.")
+            patch({ recipes: await loadRecipes() })
+            setNotice("Receita removida.")
           } catch (error) {
             setNotice(describeError(error), "error")
           }
-          return
-        }
-        try {
-          await deleteRecipe(state.selectedRecipeId)
-          patch({ selectedRecipeId: "", recipeText: "", recipeDirty: false })
-          const recipes = await loadRecipes()
-          patch({ recipes })
-          setNotice("Receita removida.")
-        } catch (error) {
-          setNotice(describeError(error), "error")
-        }
-      },
-      { variant: "danger" },
-    ),
-  )
+        },
+        { variant: "danger" },
+      ),
+    )
+  }
 
   return row
 }

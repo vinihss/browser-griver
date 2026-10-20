@@ -30,13 +30,5 @@ export const INTERNAL = {
   overlayState: "griver:overlay-state",
 } as const
 
-/** Ações do overlay de gravação. */
-export type OverlayAction =
-  | "start"
-  | "pause"
-  | "resume"
-  | "stop"
-  | "cancel"
-  | "confirm"
-  | "edit"
-  | "save"
+/** Ações do overlay de gravação (a barra de controle na página). */
+export type OverlayAction = "start" | "pause" | "resume" | "stop" | "cancel"

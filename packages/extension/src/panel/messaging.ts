@@ -10,11 +10,6 @@ export function toBackground(message: Record<string, unknown>): Promise<unknown>
   return chrome.runtime.sendMessage(message) as Promise<unknown>
 }
 
-/** Pede ao service worker para executar um comando de gravação. */
-export function recordCommand(action: "start" | "pause" | "resume" | "stop" | "discard"): void {
-  void toBackground({ type: "panel:record", action })
-}
-
 /** Avisa o service worker qual projeto está em uso. */
 export function setActiveProject(projectId: string): void {
   void toBackground({ type: "panel:project", projectId })
