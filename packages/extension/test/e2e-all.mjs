@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { criarSiteTeste } from "./site.mjs"
 
 /**
  * Endereço do servidor usado pelos testes.
@@ -215,13 +216,18 @@ let falhou = false
 const servidor = servidorInformado ? null : await subirServidor()
 const serverUrl = servidorInformado ?? servidor.url
 
+// a página de teste é criada aqui: nenhum teste depende de um arquivo solto
+// em /tmp, que sumiria na primeira limpeza da máquina
+const site = criarSiteTeste()
+
 for (const nome of TESTES) {
   limparChrome()
   await new Promise((r) => setTimeout(r, 500))
 
   const caminho = resolve(`packages/extension/test/${nome}.e2e.mjs`)
   const codigo = await new Promise((resolveCode) => {
-    const proc = spawn(process.execPath, [caminho, serverUrl], {
+    // o terceiro argumento é a página de teste: quem não usa, ignora
+    const proc = spawn(process.execPath, [caminho, serverUrl, site.url], {
       stdio: "inherit",
       detached: true,
       env: { ...process.env, TMPDIR: perfilBase },
@@ -248,6 +254,8 @@ for (const nome of TESTES) {
 }
 
 limparChrome()
+
+site.limpar()
 
 // derruba o servidor isolado antes de sair: ele fica esperando conexões
 if (servidor) {
