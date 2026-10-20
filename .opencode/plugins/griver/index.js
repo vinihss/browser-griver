@@ -44,6 +44,25 @@ function readToken(directory) {
   return ""
 }
 
+/**
+ * Pede o token ao próprio servidor.
+ *
+ * O arquivo `data/token` só vale quando o servidor roda na pasta do projeto:
+ * iniciado de outro diretório, ele usa outra pasta de dados e outro token —
+ * e o plugin passa a levar 401 em tudo. O servidor entrega o token dele em
+ * `/api/extension-token`, então essa rota é a fonte confiável.
+ */
+async function fetchServerToken() {
+  try {
+    const response = await fetch(`${SERVER_URL}/api/extension-token`)
+    if (!response.ok) return ""
+    const body = await response.json()
+    return typeof body?.token === "string" ? body.token : ""
+  } catch {
+    return ""
+  }
+}
+
 let cachedToken = ""
 let cachedDirectory = ""
 
@@ -55,19 +74,8 @@ async function api(path, options = {}) {
   }
   if (!cachedToken) cachedToken = readToken(directory)
 
-  let response = await fetch(`${SERVER_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Griver-Token": cachedToken,
-      ...(options.headers ?? {}),
-    },
-  })
-
-  // o servidor pode ter sido reiniciado com outro token — relê e tenta de novo
-  if (response.status === 401 && !options.__retried) {
-    cachedToken = readToken(directory)
-    response = await fetch(`${SERVER_URL}${path}`, {
+  const pedir = () =>
+    fetch(`${SERVER_URL}${path}`, {
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -75,6 +83,22 @@ async function api(path, options = {}) {
         ...(options.headers ?? {}),
       },
     })
+
+  let response = await pedir()
+
+  // o servidor pode ter sido reiniciado com outro token — relê e tenta de novo
+  if (response.status === 401 && !options.__retried) {
+    cachedToken = readToken(directory)
+    response = await pedir()
+  }
+
+  // ainda 401: o token do arquivo não é o do servidor — pergunta a ele
+  if (response.status === 401 && !options.__retried) {
+    const doServidor = await fetchServerToken()
+    if (doServidor) {
+      cachedToken = doServidor
+      response = await pedir()
+    }
   }
   const text = await response.text()
   let body
