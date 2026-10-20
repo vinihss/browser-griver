@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "griver-server": "./dist/main.js"
+    "griver-server": "./dist/main.js",
+    "griver-mcp": "./dist/mcp/main.js"
   },
   "exports": {
     ".": {

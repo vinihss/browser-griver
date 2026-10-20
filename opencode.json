@@ -6,9 +6,20 @@
       "mode": "primary",
       "permissions": [
         { "action": "*", "resource": "*", "effect": "allow" },
-        { "action": "browser.click", "resource": "*", "effect": "ask" },
-        { "action": "browser.fill", "resource": "*", "effect": "ask" }
+        { "action": "griver_page_click", "resource": "*", "effect": "ask" },
+        { "action": "griver_page_fill", "resource": "*", "effect": "ask" }
       ]
+    }
+  },
+  "mcp": {
+    "servers": {
+      "griver": {
+        "type": "local",
+        "command": ["node", "packages/server/dist/mcp/main.js"],
+        "environment": {
+          "GRIVER_SERVER_URL": "http://127.0.0.1:7331"
+        }
+      }
     }
   }
 }

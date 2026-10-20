@@ -228,8 +228,15 @@ mesmo — e a limpeza não derruba a si próprio.
 
 ## O assistente de IA
 
-O chat usa o **servidor local do OpenCode** como motor. O plugin em
-`.opencode/plugins/griver` registra as ferramentas `griver_*`:
+O chat usa o **servidor local do OpenCode** como motor. O agente `griver`
+(`.opencode/agents/griver.md`) define o comportamento do assistente e as
+permissões dele.
+
+As ferramentas chegam por **MCP**: o servidor do Griver é também um
+servidor MCP (`packages/server/src/mcp`), e o `opencode.json` do projeto o
+registra com o nome `griver`. Assim, o assistente do terminal e o do painel
+da extensão usam as mesmas ferramentas — ler, editar e validar receitas,
+inspecionar a aba e disparar execuções.
 
 | Ferramenta | O que faz |
 |---|---|
@@ -241,21 +248,17 @@ O chat usa o **servidor local do OpenCode** como motor. O plugin em
 | `griver_page_click` / `griver_page_fill` | age na aba — **pede aprovação** |
 | `griver_run` | executa uma receita |
 
-Editar receita é livre; agir no browser dispara uma confirmação no painel.
-O agente `griver` (`.opencode/agents/griver.md`) define o comportamento e as
-permissões.
-
-O plugin lê o token em `<projeto>/data/token` — rode `griver serve` a partir da
-raiz do projeto, ou exporte `GRIVER_TOKEN`.
+O servidor MCP precisa do build (`pnpm build`) e do servidor do Griver no
+ar. O token é o mesmo da extensão — `<projeto>/data/token` — e o endereço
+do servidor vem de `GRIVER_SERVER_URL` (padrão `http://127.0.0.1:7331`).
 
 ## Estrutura
 
 ```
 packages/core        AST da receita, interpretador, compiladores, protocolo WS
-packages/server      REST + WebSocket + SQLite + drivers + ponte OpenCode
+packages/server      REST + WebSocket + SQLite + drivers + ponte OpenCode + MCP
 packages/cli         binário `griver`
 packages/extension   extensão MV3 (esbuild + TypeScript, sem framework)
-.opencode/plugins/griver   ferramentas do assistente
 .opencode/agents/griver.md  agente do assistente
 ```
 
