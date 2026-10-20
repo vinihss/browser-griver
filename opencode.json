@@ -15,7 +15,8 @@
     "servers": {
       "griver": {
         "type": "local",
-        "command": ["node", "packages/server/dist/mcp/main.js"],
+        "cwd": "packages/server",
+        "command": ["node", "dist/mcp/main.js"],
         "environment": {
           "GRIVER_SERVER_URL": "http://127.0.0.1:7331"
         }
