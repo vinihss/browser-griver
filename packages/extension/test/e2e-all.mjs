@@ -7,7 +7,7 @@
  * Uso: node packages/extension/test/e2e-all.mjs [serverUrl]
  */
 import { spawn, execSync } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, statSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -35,6 +35,14 @@ const servidorInformado = process.argv[2]
  */
 const perfilBase = mkdtempSync(join(tmpdir(), "griver-suite-"))
 
+/**
+ * Tempo sem uso do perfil para o navegador ser considerado resíduo.
+ *
+ * Dois minutos: tempo de sobra para um teste em andamento mexer no perfil,
+ * e curto o bastante para não deixar resíduo accumulando.
+ */
+const PERFIL_PARADO_MS = 120_000
+
 const TESTES = [
   "verifica-painel",
   "overlay",
@@ -51,6 +59,17 @@ const TESTES = [
 
 /** Tempo máximo de um teste antes de ser considerado travado. */
 const TEMPO_MAXIMO_MS = 180_000
+
+/**
+ * O que esta execução montou e tem que derrubar ao sair.
+ *
+ * Vive no topo do arquivo porque a limpeza roda por sinal: quando a suíte
+ * morre no meio, quem limpa precisa saber o que existia — e não pode tropeçar
+ * numa variável que ainda não foi declarada.
+ */
+let servidor = null
+let site = null
+let extensionPath = null
 
 /**
  * Encerra servidores do Griver que ficaram órfãos.
@@ -72,19 +91,75 @@ function limparServidores() {
 }
 
 /**
+ * Limpa tudo que esta execução deixou para trás.
+ *
+ * A suíte é morta por sinal com frequência: Ctrl+C, o `timeout` do CI, o
+ * terminal fechando. O servidor isolado é detached de propósito — sem esta
+ * limpeza ele sobrevive à suíte morta e fica segurando a porta e a memória
+ * de uma execução que já acabou.
+ */
+function limpar() {
+  try {
+    site?.limpar()
+  } catch {
+    // o site já foi limpo
+  }
+
+  // derruba o servidor isolado antes de sair: ele fica esperando conexões
+  if (servidor) {
+    matarGrupo(servidor.proc)
+    try {
+      rmSync(servidor.dadosDir, { recursive: true, force: true })
+    } catch {
+      // o banco temporário pode ficar para trás; não é motivo para falhar
+    }
+  }
+
+  try {
+    rmSync(perfilBase, { recursive: true, force: true })
+  } catch {
+    // perfis temporários podem ficar para trás; não é motivo para falhar
+  }
+
+  // a cópia da extensão é nossa: some junto com a suíte
+  if (extensionPath && !process.env.GRIVER_EXTENSION_PATH) {
+    try {
+      rmSync(extensionPath, { recursive: true, force: true })
+    } catch {
+      // a pasta temporária pode ficar para trás; não é motivo para falhar
+    }
+  }
+}
+
+// o sinal chega a qualquer momento: registrar aqui garante que a limpeza
+// existe mesmo quando a suíte morre no meio da subida do servidor
+for (const sinal of ["SIGINT", "SIGTERM"]) {
+  process.on(sinal, () => {
+    console.log(`\n${sinal} — limpando antes de sair...`)
+    limpar()
+    console.log(`limpeza feita (servidor: ${servidor ? servidor.proc.pid : "nenhum"})`)
+    // o código de saída do shell: 130 é Ctrl+C, 143 é TERM
+    process.exit(sinal === "SIGINT" ? 130 : 143)
+  })
+}
+
+/**
  * Fecha os Chromes que sobraram de uma execução anterior.
  *
- * Só mata navegador que ninguém mais está usando: um Chrome cujo processo
- * pai já morreu virou órfão e vai segurar memória à toa. Quem ainda tem
- * pai vivo pertence a outra execução — essa fica intacta.
+ * O critério é o perfil: um diretório que não é mexido há mais de dois
+ * minutos pertence a um navegador que ninguém está usando — pode ser morto.
+ * Perfil mexido é teste em andamento, de outra execução ou desta, e fica
+ * intacto.
  *
- * Antes isso matava qualquer Chrome com `/griver-` no comando, o que
- * derrubava o navegador das execuções paralelas na mesma máquina.
+ * O antigo critério (matar quando o processo pai morreu) derrubava o
+ * navegador de execuções paralelas: o crashpad handler do Chrome é
+ * daemonizado, então o pai dele é o init e todo crashpad handler parecia
+ * órfão — inclusive o de um Chrome que estava rodando.
  */
 function limparChrome() {
   let lista
   try {
-    lista = execSync("ps -eo pid,ppid,args --no-headers", { encoding: "utf8" })
+    lista = execSync("ps -eo pid,args --no-headers", { encoding: "utf8" })
       .split("\n")
       .map((linha) => linha.trim())
       .filter(Boolean)
@@ -96,14 +171,25 @@ function limparChrome() {
 
   let mortos = 0
   for (const linha of lista) {
-    const [pid, ppid] = linha.split(/\s+/).slice(0, 2).map(Number)
-    if (!pid || !ppid) continue
-    if (pid === process.pid) continue
+    const pid = Number(linha.split(/\s+/)[0])
+    if (!pid || pid === process.pid) continue
+
+    const perfil = linha.match(/--user-data-dir=(\S*griver-[^\s]*)/)?.[1]
+    if (!perfil) continue
 
     // perfil desta execução: sempre nosso, pode matar
-    // perfil de outra execução: só mata se o pai morreu (órfão)
-    const nosso = linha.includes(perfilBase)
-    if (!nosso && ppid !== 1) continue
+    if (perfil.includes(perfilBase)) {
+      // segue para o kill
+    } else {
+      // perfil de outra execução: só mata se estiver parado há tempo
+      try {
+        const mexido = statSync(perfil).mtimeMs
+        if (Date.now() - mexido < PERFIL_PARADO_MS) continue
+      } catch {
+        // perfil já sumiu: o processo está saindo, não precisa de kill
+        continue
+      }
+    }
 
     try {
       // mata o grupo inteiro: o navegador e os filhos dele
@@ -268,14 +354,14 @@ async function construirExtensao() {
 
 let falhou = false
 
-const servidor = servidorInformado ? null : await subirServidor()
+servidor = servidorInformado ? null : await subirServidor()
 const serverUrl = servidorInformado ?? servidor.url
 
-const extensionPath = await construirExtensao()
+extensionPath = await construirExtensao()
 
 // a página de teste é criada aqui: nenhum teste depende de um arquivo solto
 // em /tmp, que sumiria na primeira limpeza da máquina
-const site = criarSiteTeste()
+site = criarSiteTeste()
 
 for (const nome of TESTES) {
   limparChrome()
@@ -313,33 +399,7 @@ for (const nome of TESTES) {
 
 limparChrome()
 limparServidores()
-
-site.limpar()
-
-// derruba o servidor isolado antes de sair: ele fica esperando conexões
-if (servidor) {
-  matarGrupo(servidor.proc)
-  try {
-    rmSync(servidor.dadosDir, { recursive: true, force: true })
-  } catch {
-    // o banco temporário pode ficar para trás; não é motivo para falhar
-  }
-}
-
-try {
-  rmSync(perfilBase, { recursive: true, force: true })
-} catch {
-  //Profiles temporários podem ficar para trás; não é motivo para falhar.
-}
-
-// a cópia da extensão é nossa: some junto com a suíte
-if (!process.env.GRIVER_EXTENSION_PATH) {
-  try {
-    rmSync(extensionPath, { recursive: true, force: true })
-  } catch {
-    // a pasta temporária pode ficar para trás; não é motivo para falhar
-  }
-}
+limpar()
 
 if (falhou) {
   console.log("✗ algum teste falhou")

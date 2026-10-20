@@ -168,7 +168,12 @@ export async function runRecipe(
         return result.value
       }
       case "assert": {
-        await driver.assert(step.target, step.expect, scope)
+        // o esperado pode depender do que a execução extraiu: `plano {{plano}}`
+        const esperado =
+          step.expect.value === undefined
+            ? step.expect
+            : { ...step.expect, value: interpolate(step.expect.value, scope) }
+        await driver.assert(step.target, esperado, scope)
         return undefined
       }
       case "set": {
