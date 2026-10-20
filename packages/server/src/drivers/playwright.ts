@@ -1,4 +1,4 @@
-import type { Driver, ExtractAttr, Expect, ScreenshotResult, TargetRef } from "@griver/core"
+import { buildRegExp, type Driver, type ExtractAttr, type Expect, type ScreenshotResult, type TargetRef, userAgentDe } from "@griver/core"
 import { DriverError } from "@griver/core"
 
 export interface PlaywrightDriverOptions {
@@ -94,6 +94,7 @@ export async function createPlaywrightDriver(options: PlaywrightDriverOptions = 
       headless: options.headed ? false : true,
       channel: options.channel,
       viewport: { width: 1440, height: 900 },
+      userAgent: userAgentDe(options.headed),
     })
     const pages = context.pages()
     page = pages[0] ?? (await context.newPage())
@@ -102,7 +103,10 @@ export async function createPlaywrightDriver(options: PlaywrightDriverOptions = 
       headless: options.headed ? false : true,
       channel: options.channel,
     })
-    context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      userAgent: userAgentDe(options.headed),
+    })
     page = await context.newPage()
   }
 
@@ -173,18 +177,46 @@ export async function createPlaywrightDriver(options: PlaywrightDriverOptions = 
       await page.waitForTimeout(ms)
     },
 
+    /**
+     * Espera o elemento aparecer (ou sumir) até o tempo limite.
+     *
+     * `resolve` erra na hora quando nenhum seletor casa — mas o elemento
+     * pode ainda estar renderizando. Sem repetir a busca, o `waitFor` vira
+     * um `assert` disfarçado e a receita morre em milissegundos, antes do
+     * site ter chance de responder. Aqui a busca é refeita até o limite.
+     */
     async waitFor(target: TargetRef, state = "visible", waitTimeout) {
-      const locator = await resolve(page, target, waitTimeout ?? defaultTimeout, { requireMatch: false })
-      await locator.waitFor({ state, timeout: waitTimeout ?? defaultTimeout })
+      const timeout = waitTimeout ?? defaultTimeout
+      const deadline = Date.now() + timeout
+      let ultimoErro: unknown
+
+      for (;;) {
+        try {
+          const locator = await resolve(page, target, 0, { requireMatch: false })
+          await locator.waitFor({ state, timeout: Math.max(1, deadline - Date.now()) })
+          return
+        } catch (error) {
+          ultimoErro = error
+          if (Date.now() >= deadline) break
+          await page.waitForTimeout(150)
+        }
+      }
+
+      throw ultimoErro instanceof Error
+        ? ultimoErro
+        : new DriverError(`elemento não ficou "${state}" em ${timeout}ms`)
     },
 
     async extract(target: TargetRef, attr: ExtractAttr | undefined, many: boolean) {
-      const locator = await resolve(page, target, defaultTimeout)
       if (many) {
+        // `resolve` devolve o primeiro que casou — para a lista inteira o
+        // alvo é o conjunto todo, e não a primeira linha
+        const locator = await resolve(page, target, defaultTimeout, { first: false })
         const all = await locator.all()
         const values = await Promise.all(all.map((element: any) => readAttribute(element, attr)))
         return { value: values, count: values.length }
       }
+      const locator = await resolve(page, target, defaultTimeout)
       const value = await readAttribute(locator, attr)
       return { value, count: 1 }
     },
@@ -228,7 +260,11 @@ export async function createPlaywrightDriver(options: PlaywrightDriverOptions = 
         }
         case "matches": {
           const text = ((await locator.innerText()) ?? "").trim()
-          if (!new RegExp(expect.value ?? "").test(text)) {
+          const regex = buildRegExp(expect.value ?? "")
+          if (!regex) {
+            throw new DriverError(`verificação falhou: expressão regular inválida "${expect.value ?? ""}"`)
+          }
+          if (!regex.test(text)) {
             throw new DriverError(`verificação falhou: "${expect.value ?? ""}" não casa com "${text}"`)
           }
           return
@@ -289,9 +325,10 @@ export async function resolve(
   page: PlaywrightLike,
   target: TargetRef,
   timeout: number,
-  options: { requireMatch?: boolean } = {},
+  options: { requireMatch?: boolean; first?: boolean } = {},
 ): Promise<any> {
   const requireMatch = options.requireMatch ?? true
+  const first = options.first ?? true
   const tried: string[] = []
 
   let scope: any = page
@@ -306,10 +343,12 @@ export async function resolve(
     try {
       const count = await locator.count()
       if (count > 0) {
-        const first = locator.first()
-        if (!requireMatch) return first
-        await first.waitFor({ state: "attached", timeout })
-        return first
+        if (requireMatch) {
+          // a espera é sempre no primeiro: `waitFor` num locator com vários
+          // elementos cai na regra estrita do Playwright
+          await locator.first().waitFor({ state: "attached", timeout })
+        }
+        return first ? locator.first() : locator
       }
     } catch {
       // tenta o próximo candidato

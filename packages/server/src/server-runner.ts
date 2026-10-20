@@ -76,6 +76,12 @@ export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<
   console.log("Cole o token no painel da extensão para conectar.")
   console.log(`Carregue a extensão de: ${extensionPath()}`)
 
+  if (server.orphanedRuns > 0) {
+    console.log(
+      `execuções que ficaram pendentes no servidor anterior foram encerradas: ${server.orphanedRuns}`,
+    )
+  }
+
   const shutdown = async (signal: string) => {
     console.log(`\n${signal} — encerrando...`)
     await server.close()
@@ -135,6 +141,24 @@ function sessaoDe(pid: number): number | undefined {
 }
 
 /**
+ * Variável de ambiente com o pid de quem started o servidor.
+ *
+ * O kernel não guarda de quem um processo órfão era filho: quando o pai
+ * morre, o filho é reparentado para o init e o nome se perde. Ler o
+ * `/proc` depois já não acha ninguém — e quem died na largada (um script
+ * que sobe o servidor e sai) nunca é encontrado.
+ *
+ * Quem started o servidor passa o pid por herança: o filho sabe de
+ * primeira mão quem o criou, sem depender do `/proc` e sem perder a
+ * corrida.
+ *
+ * ```sh
+ * GRIVER_CRIADOR=$$ setsid griver serve &
+ * ```
+ */
+export const VAR_CRIADOR = "GRIVER_CRIADOR"
+
+/**
  * Acha quem started a sessão do servidor: o pai do líder da sessão.
  *
  * O guardião de sempre não resolve o caso detached: quando o servidor é
@@ -146,8 +170,16 @@ function sessaoDe(pid: number): number | undefined {
  * só conta quando veio de outra sessão, porque foi o `setsid` que separou os
  * dois. No caso comum — o shell e o servidor na mesma sessão — ninguém se
  * separou, e a vigia do líder já dá conta.
+ *
+ * O pid que veio por herança tem a primeira palavra: ele foi passado por
+ * quem ainda estava vivo, e por isso não depende de o `/proc` lembrar de
+ * alguém que já saiu.
  */
 export function criadorDaSessao(): number | undefined {
+  // quem started o servidor disse quem era, por herança
+  const herdado = Number(process.env[VAR_CRIADOR])
+  if (Number.isInteger(herdado) && herdado > 1) return herdado
+
   const lider = sessaoDe(process.pid)
   if (lider === undefined) return undefined
 

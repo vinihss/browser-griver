@@ -1,9 +1,15 @@
 import { execFile } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 
 const execFileAsync = promisify(execFile)
+
+/** Onde o OpenCode é instalado por padrão. */
+export function binarioPadrao(): string {
+  return join(homedir(), ".opencode", "bin", "opencode")
+}
 
 export interface OpenCodeEvent {
   id?: string
@@ -53,14 +59,37 @@ export class OpenCodeError extends Error {
 export class OpenCodeClient {
   private endpoint: string | undefined
   private authHeader: string | undefined
+  private binarioCache: string | undefined
 
   constructor(private readonly configDir: string) {}
+
+  /**
+   * Binário do OpenCode.
+   *
+   * O do PATH é o primeiro. Mas um servidor que sobe com PATH curto — a
+   * suíte e2e, um serviço do sistema — não acha o `opencode` e o chat morre
+   * com "serviço local do OpenCode não está rodando". A instalação padrão
+   * (~/.opencode/bin) é o plano B.
+   */
+  async binario(): Promise<string> {
+    if (this.binarioCache) return this.binarioCache
+    try {
+      await execFileAsync("opencode", ["--version"], { timeout: 5_000 })
+      this.binarioCache = "opencode"
+    } catch {
+      const padrao = binarioPadrao()
+      this.binarioCache = existsSync(padrao) ? padrao : "opencode"
+    }
+    return this.binarioCache
+  }
 
   /** Descobre o endpoint do serviço local. Retorna undefined se não estiver no ar. */
   async discover(): Promise<string | undefined> {
     if (this.endpoint) return this.endpoint
     try {
-      const { stdout } = await execFileAsync("opencode", ["service", "status"], { timeout: 10_000 })
+      const { stdout } = await execFileAsync(await this.binario(), ["service", "status"], {
+        timeout: 10_000,
+      })
       const lines = stdout
         .split("\n")
         .map((line) => line.trim())
@@ -79,7 +108,7 @@ export class OpenCodeClient {
   /** Tenta iniciar o serviço local do OpenCode. */
   async start(): Promise<boolean> {
     try {
-      await execFileAsync("opencode", ["serve", "--service"], { timeout: 8_000 })
+      await execFileAsync(await this.binario(), ["serve", "--service"], { timeout: 8_000 })
     } catch {
       // o processo pode continuar em segundo plano mesmo com timeout
     }

@@ -365,6 +365,33 @@ export class Repository {
     }))
   }
 
+  /**
+   * Encerra execuções que ficaram pendentes quando o servidor caiu.
+   *
+   * O estado de uma execução em andamento vive na memória do processo: o
+   * temporizador que aborta a espera pela aba e o controlador que cancela.
+   * Um reinício leva esse estado junto, e a execução não termina nunca — o
+   * painel mostra um "em andamento" que não acaba e o cancelamento não
+   * encontra nada para interromper. Aqui elas são fechadas com um motivo
+   * explícito.
+   */
+  closeOrphanedRuns(reason: string): RunSummary[] {
+    const rows = this.db
+      .prepare(`SELECT id FROM runs WHERE status = 'running'`)
+      .all() as unknown as { id: string }[]
+    if (!rows.length) return []
+
+    const agora = Date.now()
+    const fechar = this.db.prepare(
+      `UPDATE runs SET status = 'error', ended_at = ?, error = ? WHERE id = ?`,
+    )
+    for (const row of rows) fechar.run(agora, reason, row.id)
+
+    return rows
+      .map((row) => this.getRun(row.id))
+      .filter((run): run is RunSummary => run !== undefined)
+  }
+
   getRunLog(id: string): unknown[] {
     const row = this.db.prepare(`SELECT log FROM runs WHERE id = ?`).get(id) as unknown as
       | { log: string }

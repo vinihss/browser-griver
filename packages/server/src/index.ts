@@ -20,6 +20,8 @@ export const SERVER_VERSION = "0.1.0"
 export interface GriverServer {
   config: ServerConfig
   url: string
+  /** execuções que estavam pendentes quando o processo anterior caiu */
+  orphanedRuns: number
   close(): Promise<void>
 }
 
@@ -29,6 +31,11 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
   const db = openDatabase(config.dbPath)
   const repo = new Repository(db)
   const recording = new RecordingBuffer()
+
+  // Execuções em andamento de um processo anterior não vão terminar: o
+  // temporizador que as aguardava vivia na memória que o reinício levou
+  // junto. Elas são fechadas aqui para não ficarem eternas no painel.
+  const orphanedRuns = repo.closeOrphanedRuns("servidor reiniciou durante a execução").length
 
   // o gateway precisa do servidor HTTP, então criamos o HTTP primeiro
   const router = new Router()
@@ -346,6 +353,7 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
   return {
     config,
     url,
+    orphanedRuns,
     async close() {
       scheduler.stop()
       await wsGateway.close()
