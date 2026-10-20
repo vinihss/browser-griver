@@ -43,20 +43,20 @@ const tokenDoServidor = await fetch(`${serverUrl}/api/extension-token`).then((r)
  * painel abrir. Sem esperar, o token velho seria plantado antes da renovação
  * e o service worker a desfaria: o teste passaria sem exercitar o bug.
  */
-async function tokenGuardado(): Promise<string> {
+async function tokenGuardado() {
   return await worker.evaluate(async () => {
     const guardado = await chrome.storage.local.get("griver.token")
-    return (guardado["griver.token"] as string) ?? ""
+    return guardado["griver.token"] ?? ""
   })
 }
 
-let renovation = ""
+let guardado = ""
 for (let tentativa = 0; tentativa < 40; tentativa++) {
-  renovation = await tokenGuardado()
-  if (renewal === tokenDoServidor.token) break
+  guardado = await tokenGuardado()
+  if (guardado === tokenDoServidor.token) break
   await new Promise((r) => setTimeout(r, 250))
 }
-console.log("0. service worker guardou o token do servidor:", renovation === tokenDoServidor.token ? "sim" : "NÃO")
+console.log("0. service worker guardou o token do servidor:", guardado === tokenDoServidor.token ? "sim" : "NÃO")
 
 // agora planta o token velho: o endereço é o do servidor do teste, mas o
 // token guardado é de outro — o estado em que a extensão fica depois de
