@@ -7,6 +7,7 @@ export const STORAGE = {
   recording: "griver.recording",
   activeTab: "griver.activeTab",
   chatSession: "griver.chatSession",
+  defaultProjectId: "griver.defaultProjectId",
 } as const
 
 export const EXTENSION_VERSION = "0.1.0"
@@ -21,4 +22,21 @@ export const INTERNAL = {
   pageResult: "griver:page-result",
   stateChanged: "griver:state",
   captureScreenshot: "griver:screenshot",
+  /** content script pergunta o que deve exibir */
+  overlayQuery: "griver:overlay-query",
+  /** content script ou painel pedem uma ação do overlay */
+  overlayCommand: "griver:overlay-command",
+  /** service worker manda o estado para o overlay desenhar */
+  overlayState: "griver:overlay-state",
 } as const
+
+/** Ações do overlay de gravação. */
+export type OverlayAction =
+  | "start"
+  | "pause"
+  | "resume"
+  | "stop"
+  | "cancel"
+  | "confirm"
+  | "edit"
+  | "save"

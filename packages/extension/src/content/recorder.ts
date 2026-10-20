@@ -12,6 +12,8 @@ export class Recorder {
   private paused = false
   private onEvent: ((event: RecordedEvent) => void) | undefined
   private readonly pendingInputs = new Map<Element, ReturnType<typeof setTimeout>>()
+  /** último valor emitido por campo — evita o par `input` + `change` */
+  private readonly emittedValues = new WeakMap<Element, string>()
   private readonly listeners: (() => void)[] = []
 
   get isRecording(): boolean {
@@ -189,6 +191,11 @@ export class Recorder {
         : element instanceof HTMLSelectElement
           ? element.value
           : ""
+
+    // `input` e `change` disparam juntos: o mesmo valor no mesmo campo vira
+    // um único passo
+    if (this.emittedValues.get(element) === value) return
+    this.emittedValues.set(element, value)
 
     onEvent({
       kind: element instanceof HTMLSelectElement ? "select" : "input",

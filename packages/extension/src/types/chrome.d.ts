@@ -29,6 +29,23 @@ declare namespace chrome {
       ): void
     }
 
+    interface Port {
+      name: string
+      postMessage(message: unknown): void
+      onMessage: {
+        addListener(callback: (message: unknown) => void): void
+      }
+      onDisconnect: {
+        addListener(callback: () => void): void
+      }
+    }
+
+    const onConnect: {
+      addListener(callback: (port: Port) => void): void
+    }
+
+    function connect(options: { name: string }): Port
+
     function sendMessage(message: unknown): Promise<unknown>
     function getURL(path: string): string
     function getManifest(): { version: string; name: string }

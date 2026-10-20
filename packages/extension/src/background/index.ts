@@ -1,10 +1,21 @@
 import { runRecipe, type Recipe, type StepEvent } from "@griver/core/runtime"
 import type { RecordedEvent } from "@griver/core/protocol"
-import { INTERNAL, STORAGE } from "../shared/constants.js"
+import { INTERNAL, STORAGE, type OverlayAction } from "../shared/constants.js"
 import { WsClient, type ConnectionStatus } from "./ws-client.js"
 import { TabDriver, injectRecorder } from "./tab-driver.js"
 
 type PanelMessage = { type: string; [key: string]: unknown }
+
+/** Estado que o overlay desenha. */
+interface OverlayState {
+  visible: boolean
+  recording: boolean
+  paused: boolean
+  steps: number
+  events: RecordedEvent[]
+  recipe?: Recipe
+  confirmed: boolean
+}
 
 // ── estado do service worker ────────────────────────────────────────────────
 
@@ -16,6 +27,12 @@ const state = {
   recordingTabId: undefined as number | undefined,
   activeTabId: undefined as number | undefined,
   lastServerMessages: [] as unknown[],
+  /** eventos capturados durante a gravação (a fonte é o servidor) */
+  recordingEvents: [] as RecordedEvent[],
+  /** receita pronta, enviada pelo servidor ao parar a gravação */
+  recordedRecipe: undefined as Recipe | undefined,
+  /** o usuário confirmou a gravação no overlay */
+  recordingConfirmed: false,
 }
 
 const ws = new WsClient({
@@ -121,7 +138,7 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
       return true
 
     case "panel:record": {
-      void handleRecordCommand(String(message.action)).catch((error) => {
+      void handleOverlayAction(String(message.action) as OverlayAction).catch((error) => {
         // sem isso a gravação falharia em silêncio e o painel não saberia
         const texto = error instanceof Error ? error.message : String(error)
         console.error("[griver] falha no comando de gravação:", error)
@@ -158,16 +175,71 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
       return true
     }
 
+    case INTERNAL.overlayQuery: {
+      // o content script pergunta o que exibir — é assim que o overlay
+      // reaparece depois de uma navegação
+      sendResponse(overlayState())
+      return false
+    }
+
+    case INTERNAL.overlayCommand: {
+      void handleOverlayAction(String(message.action) as OverlayAction).catch((error) => {
+        const texto = error instanceof Error ? error.message : String(error)
+        console.error("[griver] falha no comando do overlay:", error)
+        broadcast({
+          type: "server",
+          message: { type: "error", message: `Gravação: ${texto}` },
+        })
+      })
+      sendResponse({ ok: true })
+      return false
+    }
+
     default:
       return false
   }
 })
 
-// ── gravação ────────────────────────────────────────────────────────────────
+// ── gravação: o service worker é o dono do estado ───────────────────────────
+//
+// O content script morre a cada navegação, mas a gravação precisa sobreviver
+// a ela — o primeiro passo de uma receita costuma ser justamente navegar.
+// Por isso o estado fica aqui, e o content script só captura eventos.
 
-async function handleRecordCommand(action: string): Promise<void> {
+async function handleOverlayAction(action: OverlayAction): Promise<void> {
+  switch (action) {
+    case "start":
+      await startRecording()
+      return
+    case "pause":
+      await pauseRecording()
+      return
+    case "resume":
+      await resumeRecording()
+      return
+    case "stop":
+      await stopRecording()
+      return
+    case "cancel":
+      await cancelRecording()
+      return
+    case "confirm":
+      state.recordingConfirmed = true
+      await pushOverlayState()
+      return
+    case "edit":
+      await openDraftInPanel()
+      return
+    case "save":
+      await openDraftInPanel(true)
+      return
+  }
+}
+
+/** Começa a gravação na aba ativa. */
+async function startRecording(): Promise<void> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.id) return
+  if (!tab?.id) throw new Error("nenhuma aba ativa")
 
   if (!/^(https?|file):/i.test(tab.url ?? "")) {
     throw new Error(
@@ -176,81 +248,109 @@ async function handleRecordCommand(action: string): Promise<void> {
   }
 
   state.activeTabId = tab.id
+  state.recording = true
+  state.recordingPaused = false
+  state.recordingSteps = 0
+  state.recordingEvents = []
+  state.recordedRecipe = undefined
+  state.recordingConfirmed = false
+  state.recordingTabId = tab.id
 
-  switch (action) {
-    case "start":
-      await injectRecorder(tab.id)
-      await chrome.tabs.sendMessage(tab.id, {
-        type: INTERNAL.recordCommand,
-        command: { action: "start" },
-      })
-      state.recording = true
-      state.recordingPaused = false
-      state.recordingSteps = 0
-      state.recordingTabId = tab.id
-      // o servidor precisa saber que a gravação começou antes de receber eventos
-      ws.send({ type: "record.start", projectId: currentProjectId, tabId: tab.id })
-      watchNavigation(tab.id)
-      // a URL inicial é o primeiro passo da receita
-      if (tab.url) {
-        emitRecordEvent({ kind: "navigate", url: tab.url, ts: Date.now() })
-      }
-      broadcast({ type: "recording", recording: true, paused: false, steps: 0 })
-      break
+  await injectRecorder(tab.id)
+  await sendRecordCommand(tab.id, "start")
 
-    case "pause":
-      await chrome.tabs.sendMessage(tab.id, {
-        type: INTERNAL.recordCommand,
-        command: { action: "pause" },
-      })
-      state.recordingPaused = true
-      ws.send({ type: "record.pause" })
-      broadcast({ type: "recording", recording: true, paused: true, steps: state.recordingSteps })
-      break
+  // o servidor precisa saber que a gravação começou antes de receber eventos
+  ws.send({ type: "record.start", projectId: currentProjectId, tabId: tab.id })
+  watchNavigation(tab.id)
 
-    case "resume":
-      await chrome.tabs.sendMessage(tab.id, {
-        type: INTERNAL.recordCommand,
-        command: { action: "resume" },
-      })
-      state.recordingPaused = false
-      ws.send({ type: "record.resume" })
-      broadcast({ type: "recording", recording: true, paused: false, steps: state.recordingSteps })
-      break
-
-    case "stop": {
-      const resposta = (await chrome.tabs.sendMessage(tab.id, {
-        type: INTERNAL.recordCommand,
-        command: { action: "stop" },
-      })) as { ok: boolean; events?: RecordedEvent[] } | undefined
-
-      state.recording = false
-      state.recordingPaused = false
-      chrome.webNavigation.onCommitted.removeListener(onNavigation)
-
-      // o que sobrou no content script entra antes do encerramento
-      for (const evento of resposta?.events ?? []) emitRecordEvent(evento)
-      // pequena margem para eventos que ainda estavam a caminho
-      await new Promise((resolve) => setTimeout(resolve, 120))
-
-      ws.send({ type: "record.stop" })
-      broadcast({ type: "recording", recording: false, paused: false, steps: state.recordingSteps })
-      break
-    }
-
-    case "discard":
-      await chrome.tabs.sendMessage(tab.id, {
-        type: INTERNAL.recordCommand,
-        command: { action: "stop" },
-      })
-      state.recording = false
-      state.recordingPaused = false
-      state.recordingSteps = 0
-      chrome.webNavigation.onCommitted.removeListener(onNavigation)
-      ws.send({ type: "record.discard" })
-      broadcast({ type: "recording", recording: false, paused: false, steps: 0 })
-      break
+  // a URL inicial é o primeiro passo da receita
+  if (tab.url) {
+    emitRecordEvent({ kind: "navigate", url: tab.url, ts: Date.now() })
   }
+
+  await pushOverlayState()
+}
+
+/** Pausa a captura: os eventos deixam de ser gravados, mas o overlay fica. */
+async function pauseRecording(): Promise<void> {
+  if (!state.recording || state.recordingPaused) return
+  const tabId = state.recordingTabId
+  if (tabId !== undefined) await sendRecordCommand(tabId, "pause")
+  state.recordingPaused = true
+  ws.send({ type: "record.pause" })
+  await pushOverlayState()
+}
+
+/** Retoma a captura. */
+async function resumeRecording(): Promise<void> {
+  if (!state.recording || !state.recordingPaused) return
+  const tabId = state.recordingTabId
+  if (tabId !== undefined) await sendRecordCommand(tabId, "resume")
+  state.recordingPaused = false
+  ws.send({ type: "record.resume" })
+  await pushOverlayState()
+}
+
+/**
+ * Para a gravação.
+ *
+ * O overlay continua visível com os passos capturados: o usuário ainda pode
+ * editar ou salvar a receita.
+ */
+async function stopRecording(): Promise<void> {
+  if (!state.recording) return
+  const tabId = state.recordingTabId
+
+  if (tabId !== undefined) {
+    const resposta = (await chrome.tabs.sendMessage(tabId, {
+      type: INTERNAL.recordCommand,
+      command: { action: "stop" },
+    })) as { ok: boolean; events?: RecordedEvent[] } | undefined
+
+    // o que sobrou no content script entra antes do encerramento
+    for (const evento of resposta?.events ?? []) emitRecordEvent(evento)
+    // pequena margem para eventos que ainda estavam a caminho
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+
+  state.recording = false
+  state.recordingPaused = false
+  removeNavigationWatch()
+
+  ws.send({ type: "record.stop" })
+  await pushOverlayState()
+}
+
+/** Descarta a gravação: some com o overlay e com os passos capturados. */
+async function cancelRecording(): Promise<void> {
+  const tabId = state.recordingTabId
+  const estavaGravando = state.recording
+  if (estavaGravando && tabId !== undefined) {
+    await sendRecordCommand(tabId, "stop").catch(() => undefined)
+  }
+
+  state.recording = false
+  state.recordingPaused = false
+  state.recordingSteps = 0
+  state.recordingEvents = []
+  state.recordedRecipe = undefined
+  state.recordingConfirmed = false
+  removeNavigationWatch()
+
+  if (estavaGravando) ws.send({ type: "record.discard" })
+  await pushOverlayState()
+}
+
+/** Manda o rascunho da gravação para o painel abrir o editor. */
+async function openDraftInPanel(save = false): Promise<void> {
+  const recipe = state.recordedRecipe
+  if (!recipe) return
+
+  broadcast(
+    save
+      ? { type: "panel:openAddScript", url: recipe.startUrl ?? "" }
+      : { type: "panel:openEditor", recipe },
+  )
 }
 
 let currentProjectId = ""
@@ -269,27 +369,92 @@ chrome.runtime.onMessage.addListener((message: PanelMessage) => {
 
 /** Registra um evento de gravação e encaminha ao servidor. */
 function emitRecordEvent(event: RecordedEvent): void {
+  if (!state.recording) return
   state.recordingSteps += 1
   ws.send({ type: "record.event", event })
-  broadcast({
-    type: "recording",
+  void pushOverlayState()
+}
+
+/** Envia um comando de captura ao content script da aba gravada. */
+async function sendRecordCommand(tabId: number, action: "start" | "pause" | "resume" | "stop"): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: INTERNAL.recordCommand,
+      command: { action },
+    })
+  } catch {
+    // a aba pode ter sido recarregada: o content script ainda não existe
+    await injectRecorder(tabId)
+    await chrome.tabs.sendMessage(tabId, {
+      type: INTERNAL.recordCommand,
+      command: { action },
+    })
+  }
+}
+
+// ── estado do overlay ───────────────────────────────────────────────────────
+
+/** Monta o estado que o overlay desenha. */
+function overlayState(): OverlayState {
+  const hasDraft = state.recordedRecipe !== undefined
+  return {
+    visible: state.recording || hasDraft,
     recording: state.recording,
     paused: state.recordingPaused,
     steps: state.recordingSteps,
-  })
+    events: state.recordingEvents,
+    recipe: state.recordedRecipe,
+    confirmed: state.recordingConfirmed,
+  }
 }
+
+/** Manda o estado do overlay para a aba gravada. */
+async function pushOverlayState(): Promise<void> {
+  const tabId = state.recordingTabId ?? state.activeTabId
+  if (tabId === undefined) return
+  const payload = overlayState()
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: INTERNAL.overlayState, state: payload })
+  } catch {
+    // a aba pode não ter content script ainda — ela pergunta depois
+  }
+  // o painel acompanha o mesmo estado
+  broadcast({ type: "recording", recording: state.recording, paused: state.recordingPaused, steps: state.recordingSteps })
+}
+
+// ── navegação durante a gravação ────────────────────────────────────────────
 
 /** Acompanha navigações da aba gravada para virar um passo `navigate`. */
 function watchNavigation(tabId: number): void {
   state.recordingTabId = tabId
   chrome.webNavigation.onCommitted.removeListener(onNavigation)
   chrome.webNavigation.onCommitted.addListener(onNavigation)
+  chrome.tabs.onUpdated.removeListener(onTabUpdated)
+  chrome.tabs.onUpdated.addListener(onTabUpdated)
+}
+
+function removeNavigationWatch(): void {
+  chrome.webNavigation.onCommitted.removeListener(onNavigation)
+  chrome.tabs.onUpdated.removeListener(onTabUpdated)
 }
 
 function onNavigation(details: chrome.webNavigation.NavigationEvent): void {
   if (details.tabId !== state.recordingTabId || details.frameId !== 0) return
   if (!state.recording) return
   emitRecordEvent({ kind: "navigate", url: details.url, ts: Date.now() })
+}
+
+/**
+ * Retoma a captura depois que a página recarrega.
+ *
+ * O content script novo pergunta o estado ao service worker e volta a
+ * capturar sozinho — por isso não é preciso reinjetar nada aqui.
+ */
+function onTabUpdated(tabId: number, changeInfo: chrome.tabs.TabChangeInfo): void {
+  if (changeInfo.status !== "complete") return
+  if (tabId !== state.recordingTabId) return
+  if (!state.recording) return
+  void pushOverlayState()
 }
 
 // ── execução na aba ─────────────────────────────────────────────────────────
@@ -387,15 +552,23 @@ async function handleServerMessage(message: { type: string; [key: string]: unkno
     }
 
     case "record.state": {
-      state.recording = message.state === "recording" || message.state === "paused"
-      state.recordingPaused = message.state === "paused"
       state.recordingSteps = Number(message.steps ?? 0)
-      broadcast({
-        type: "recording",
-        recording: state.recording,
-        paused: state.recordingPaused,
-        steps: state.recordingSteps,
-      })
+      await pushOverlayState()
+      return
+    }
+
+    case "record.step": {
+      state.recordingEvents = [...state.recordingEvents, message.event as RecordedEvent].slice(-200)
+      await pushOverlayState()
+      return
+    }
+
+    case "record.finished": {
+      state.recordedRecipe = message.recipe as Recipe | undefined
+      state.recording = false
+      state.recordingPaused = false
+      removeNavigationWatch()
+      await pushOverlayState()
       return
     }
   }
@@ -432,7 +605,32 @@ async function runPageCommand(request: PageCommandLike): Promise<{ ok: boolean; 
 
 // ──painel ──────────────────────────────────────────────────────────────────
 
+/**
+ * Portas dos painéis abertos.
+ *
+ * `chrome.runtime.sendMessage` do service worker não alcança outras páginas
+ * de extensão, então o painel se anuncia por uma conexão dedicada — é por
+ * ela que chegam os avisos e o rascunho da gravação.
+ */
+const panelPorts = new Set<chrome.runtime.Port>()
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "griver:panel") return
+  panelPorts.add(port)
+  port.onDisconnect.addListener(() => {
+    panelPorts.delete(port)
+  })
+})
+
 function broadcast(message: PanelMessage): void {
+  for (const port of panelPorts) {
+    try {
+      port.postMessage(message)
+    } catch {
+      panelPorts.delete(port)
+    }
+  }
+  // o runtime ainda alcança as páginas que ainda não conectaram
   void chrome.runtime.sendMessage(message).catch(() => undefined)
 }
 

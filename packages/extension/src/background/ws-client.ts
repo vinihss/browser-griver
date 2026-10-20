@@ -23,6 +23,8 @@ export class WsClient {
   private attempts = 0
   private closed = false
   private queue: ClientMessage[] = []
+  /** conexão em andamento — evita abrir dois sockets ao mesmo tempo */
+  private pending: Promise<void> | undefined
 
   constructor(private readonly options: WsClientOptions) {}
 
@@ -35,6 +37,17 @@ export class WsClient {
     this.closed = false
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return
 
+    // duas chamadas concorrentes compartilhariam a mesma promessa: sem isso,
+    // cada uma abriria um socket e o servidor passaria a enviar os mesmos
+    // eventos duas vezes — duplicando passos na gravação
+    if (this.pending) return this.pending
+    this.pending = this.openSocket().finally(() => {
+      this.pending = undefined
+    })
+    return this.pending
+  }
+
+  private async openSocket(): Promise<void> {
     this.options.onStatus("connecting")
 
     const { url, token } = await this.options.getUrl()
@@ -62,7 +75,7 @@ export class WsClient {
 
       socket.onclose = () => {
         this.stopHeartbeat()
-        this.socket = undefined
+        if (this.socket === socket) this.socket = undefined
         this.options.onStatus("offline")
         if (!this.closed) this.scheduleReconnect()
       }

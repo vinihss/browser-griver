@@ -1,9 +1,11 @@
 import { INTERNAL } from "../shared/constants.js"
 import { Recorder } from "./recorder.js"
+import { RecordingOverlay, type OverlayState } from "./overlay.js"
 import * as executor from "./executor.js"
 import { buildSelectorCandidates, visibleText } from "./selector.js"
 
 const recorder = new Recorder()
+const overlay = new RecordingOverlay()
 
 interface RecordCommand {
   action: "start" | "pause" | "resume" | "stop"
@@ -39,6 +41,11 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
       return false
     }
 
+    case INTERNAL.overlayState: {
+      overlay.render(message.state as OverlayState)
+      return false
+    }
+
     case INTERNAL.execute: {
       const command = message.command as ExecuteCommand
       void runStep(command.step)
@@ -67,6 +74,19 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender,
 
     default:
       return false
+  }
+})
+
+// O overlay pergunta o que exibir assim que a página carrega — é assim que
+// ele reaparece depois de uma navegação, sem depender do service worker.
+//
+// A mesma resposta diz se a gravação continua ativa: nesse caso a captura
+// precisa ser retomada, porque este é um content script novo.
+void overlay.mount().then((estado) => {
+  if (estado.recording && !estado.paused) {
+    recorder.start((event) => {
+      void chrome.runtime.sendMessage({ type: INTERNAL.recordEvent, event }).catch(() => undefined)
+    })
   }
 })
 
