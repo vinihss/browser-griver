@@ -1,5 +1,5 @@
 import { mount } from "./app.js"
-import { state, patch } from "./state.js"
+import { state, patch, setNotice } from "./state.js"
 import { refreshProjects } from "./views/projects.js"
 
 const root = document.getElementById("root")
@@ -33,11 +33,13 @@ void chrome.runtime
  * Se não estiver, exibe um aviso impedindo o uso do painel.
  */
 async function verificarServidorConectado(): Promise<void> {
+  const url = state.serverUrl || "http://127.0.0.1:7331"
+  const healthUrl = `${url.replace(/\/$/, "")}/api/health`
+
   try {
-    const url = state.serverUrl || "http://127.0.0.1:7331"
-    const response = await fetch(`${url.replace(/\/$/, "")}/api/health`, {
+    const response = await fetch(healthUrl, {
       method: "GET",
-      timeout: 3000,
+      signal: AbortSignal.timeout(3000),
     })
 
     if (!response.ok) {
@@ -103,9 +105,9 @@ async function verificarServidorConectado(): Promise<void> {
         root!.removeChild(overlay)
         // Tentar conectar novamente
         try {
-          const res = await fetch(`${url.replace(/\/$/, "")}/api/health`, {
+          const res = await fetch(healthUrl, {
             method: "GET",
-            timeout: 3000,
+            signal: AbortSignal.timeout(3000),
           })
           if (res.ok) {
             patch({ notice: undefined })
