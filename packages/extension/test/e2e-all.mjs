@@ -12,6 +12,11 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { criarSiteTeste } from "./site.mjs"
+import { exigeDisplay } from "./helpers.mjs"
+
+// sem tela, cada um dos nove testes morre na largada com o mesmo erro
+// confuso: melhor avisar uma vez, com a causa e o conserto
+exigeDisplay()
 
 /**
  * Endereço do servidor usado pelos testes.

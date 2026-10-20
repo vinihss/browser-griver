@@ -31,6 +31,27 @@ export function servidorDoTeste(argumentos) {
 }
 
 /**
+ * Falha cedo quando não há tela para o Chrome.
+ *
+ * Os e2e abrem um Chrome de verdade (headed). Sem `DISPLAY` no Linux, o
+ * navegador morre na largada com "Missing X server or $DISPLAY" e a suíte
+ * inteira falha com nove erros que não dizem nada sobre a causa — o
+ * problema não é o código, é a tela que sumiu (login novo, sessão sem
+ * Wayland, `sudo` sem o display do usuário).
+ */
+export function exigeDisplay() {
+  if (process.platform !== "linux") return
+  if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return
+
+  console.error(
+    "os testes e2e precisam de uma tela: o Chrome de verdade não abre sem ela.\n" +
+      "  export DISPLAY=:1   (o Xwayland do seu login)\n" +
+      "  ou rode com xvfb-run: xvfb-run -a node packages/extension/test/e2e-all.mjs",
+  )
+  process.exit(1)
+}
+
+/**
  * Garante que o navegador feche se o teste falhar no meio.
  *
  * Um Chrome órfão continua conectado ao servidor e capturando eventos: os
