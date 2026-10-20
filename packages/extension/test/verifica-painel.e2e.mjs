@@ -14,7 +14,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -58,30 +58,10 @@ await panel.waitForSelector(".panel-header", { timeout: 15000 })
 await panel.waitForTimeout(800)
 
 // ── 0. conectar ao servidor ────────────────────────────────────────────────
-// o botão "Conectar" fica na tela de Ajustes
-await panel.evaluate(async ([url]) => {
-  await chrome.storage.local.set({ "griver.serverUrl": url })
-  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
-}, [serverUrl])
-await panel.waitForTimeout(400)
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll("button"))
-    .find((b) => b.textContent?.trim() === "Conectar")
-    ?.click()
-})
-
-// espera a conexão ficar online antes de conferir a lista
-let online = false
-for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
-  await panel.waitForTimeout(500)
-  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
-}
-
-// volta para Receitas, que é a tela inicial
-await panel.evaluate(() => {
-  document.querySelector('.panel-header button[title="Receitas"]')?.click()
-})
-await panel.waitForTimeout(600)
+// o endereço vai pelo campo de texto do painel: só assim a extensão
+// reconnecta ao servidor certo e renova o token
+const online = await conectar(panel, serverUrl)
+console.log("0. conectado ao servidor:", online ? "sim" : "NÃO")
 
 // ── 1. o painel renderizou? ────────────────────────────────────────────────
 const estrutura = await panel.evaluate(() => ({
@@ -97,13 +77,44 @@ console.log("1. header:", estrutura.temHeader, "| botão +:", estrutura.temMais,
 console.log("2. seção:", estrutura.temSecao)
 
 // ── 2. receitas carregam sozinhas? ─────────────────────────────────────────
+//
+// o servidor pode estar vazio — uma base nova não tem receita nenhuma — e
+// aí a lista não teria o que mostrar. O teste cria a sua e confere a linha.
+const token = await panel.evaluate(async () => {
+  const guardado = await chrome.storage.local.get("griver.token")
+  return guardado["griver.token"] ?? ""
+})
+
+const criada = await panel.evaluate(async ([tk, base]) => {
+  const headers = { "Content-Type": "application/json", "X-Griver-Token": tk }
+  const projetoRes = await fetch(`${base}/api/projects`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Projeto do teste" }),
+  })
+  const projeto = (await projetoRes.json()).project
+  const receitaRes = await fetch(`${base}/api/recipes`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      projectId: projeto.id,
+      name: "Receita do teste",
+      target: "browser",
+      recipe: { version: 1, steps: [] },
+    }),
+  })
+  const receita = (await receitaRes.json()).recipe
+  return { projetoId: projeto?.id ?? "", receitaId: receita?.id ?? "" }
+}, [token, serverUrl])
+console.log("3. receita criada no servidor:", criada.receitaId ? "sim" : "NÃO")
+
 await panel.waitForTimeout(1500)
 const receitas = await panel.evaluate(() =>
   Array.from(document.querySelectorAll(".recipe-row .truncate")).map(
     (el) => el.textContent?.trim() ?? "",
   ),
 )
-console.log("3. receitas carregadas automaticamente:", receitas.length ? receitas.join(", ") : "(nenhuma)")
+console.log("4. receitas carregadas automaticamente:", receitas.length ? receitas.join(", ") : "(nenhuma)")
 
 // ── 3. a linha tem os botões de ação? ───────────────────────────────────────
 const acoes = await panel.evaluate(() => {
@@ -116,8 +127,8 @@ const acoes = await panel.evaluate(() => {
     truncado: Boolean(row.querySelector(".truncate")),
   }
 })
-console.log("4. botões de ação (Edit, Run):", acoes.ok ? "sim" : `NÃO (${JSON.stringify(acoes)})`)
-console.log("5. título truncado:", acoes.truncado ? "sim" : "NÃO")
+console.log("5. botões de ação (Edit, Run):", acoes.ok ? "sim" : `NÃO (${JSON.stringify(acoes)})`)
+console.log("6. título truncado:", acoes.truncado ? "sim" : "NÃO")
 
 // ── 4. o "+" abre o modal Add New Script? ───────────────────────────────────
 await panel.evaluate(() => {
@@ -135,7 +146,7 @@ const modal = await panel.evaluate(() => {
   const botoes = Array.from(el.querySelectorAll("button")).map((b) => b.textContent?.trim())
   return { ok: true, labels, botoes }
 })
-console.log("6. modal Add New Script:", modal.ok ? `sim (${modal.labels.join(", ")} | ${modal.botoes.join(", ")})` : "NÃO")
+console.log("7. modal Add New Script:", modal.ok ? `sim (${modal.labels.join(", ")} | ${modal.botoes.join(", ")})` : "NÃO")
 
 // fecha o modal
 await panel.evaluate(() => {
@@ -157,7 +168,7 @@ const chat = await panel.evaluate(() => ({
   temConversa: Boolean(document.querySelector(".chat-messages")),
   temReceitas: Boolean(document.querySelector(".recipe-row")),
 }))
-console.log("7. Chat alternado:", chat.temConversa && !chat.temReceitas ? "sim" : `NÃO (${JSON.stringify(chat)})`)
+console.log("8. Chat alternado:", chat.temConversa && !chat.temReceitas ? "sim" : `NÃO (${JSON.stringify(chat)})`)
 
 // volta para Receitas
 await panel.evaluate(() => {
@@ -167,10 +178,34 @@ await panel.evaluate(() => {
 await panel.waitForTimeout(500)
 
 const voltou = await panel.evaluate(() => Boolean(document.querySelector(".recipe-row")))
-console.log("8. voltou para Receitas:", voltou ? "sim" : "NÃO")
+console.log("9. voltou para Receitas:", voltou ? "sim" : "NÃO")
 
 // ── 6. erros de runtime ────────────────────────────────────────────────────
 console.log("\nerros de runtime:", erros.length ? erros.join(" | ") : "nenhum")
+
+// ── 7. limpeza: o teste não deixa lixo na base ─────────────────────────────
+if (criada.receitaId) {
+  await panel.evaluate(
+    async ([tk, id, base]) => {
+      await fetch(`${base}/api/recipes/${id}`, {
+        method: "DELETE",
+        headers: { "X-Griver-Token": tk },
+      })
+    },
+    [token, criada.receitaId, serverUrl],
+  )
+}
+if (criada.projetoId) {
+  await panel.evaluate(
+    async ([tk, id, base]) => {
+      await fetch(`${base}/api/projects/${id}`, {
+        method: "DELETE",
+        headers: { "X-Griver-Token": tk },
+      })
+    },
+    [token, criada.projetoId, serverUrl],
+  )
+}
 
 await context.close()
 

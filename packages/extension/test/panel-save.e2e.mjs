@@ -11,7 +11,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -48,24 +48,9 @@ await panel.waitForSelector(".panel-header", { timeout: 15000 })
 await panel.waitForTimeout(500)
 
 // ── 1. conectar ────────────────────────────────────────────────────────────
-// o botão "Conectar" fica na tela de Ajustes
-await panel.evaluate(async ([url]) => {
-  await chrome.storage.local.set({ "griver.serverUrl": url })
-  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
-}, [serverUrl])
-await panel.waitForTimeout(400)
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll("button"))
-    .find((b) => b.textContent?.trim() === "Conectar")
-    ?.click()
-})
-
-// espera a conexão ficar online antes de gravar
-let online = false
-for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
-  await panel.waitForTimeout(500)
-  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
-}
+// o endereço vai pelo campo de texto do painel: só assim a extensão
+// reconecta ao servidor certo e renova o token
+const online = await conectar(panel, serverUrl)
 console.log("1. conectado:", online ? "sim" : "NÃO")
 
 // volta para Receitas, onde fica o botão de gravar

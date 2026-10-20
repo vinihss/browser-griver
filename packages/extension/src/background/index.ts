@@ -1,6 +1,6 @@
 import { runRecipe, type Recipe, type StepEvent } from "@griver/core/runtime"
 import type { RecordedEvent } from "@griver/core/protocol"
-import { INTERNAL, STORAGE, type OverlayAction } from "../shared/constants.js"
+import { INTERNAL, STORAGE, DEFAULT_SERVER_URL, type OverlayAction } from "../shared/constants.js"
 import { WsClient, type ConnectionStatus } from "./ws-client.js"
 import { TabDriver, injectRecorder } from "./tab-driver.js"
 
@@ -39,7 +39,7 @@ const ws = new WsClient({
   getUrl: async () => {
     const stored = await chrome.storage.local.get([STORAGE.serverUrl, STORAGE.token])
     return {
-      url: (stored[STORAGE.serverUrl] as string) || "http://127.0.0.1:7331",
+      url: (stored[STORAGE.serverUrl] as string) || DEFAULT_SERVER_URL,
       token: (stored[STORAGE.token] as string) || "",
     }
   },
@@ -86,13 +86,17 @@ async function connect(): Promise<void> {
  */
 async function ensureToken(): Promise<void> {
   const stored = await chrome.storage.local.get([STORAGE.serverUrl, STORAGE.token])
-  const url = (stored[STORAGE.serverUrl] as string) || "http://127.0.0.1:7331"
+  const url = (stored[STORAGE.serverUrl] as string) || DEFAULT_SERVER_URL
 
   try {
     const response = await fetch(`${url.replace(/\/$/, "")}/api/extension-token`)
     if (!response.ok) return
     const body = (await response.json()) as { token?: string }
     if (!body.token) return
+    // o servidor pode ter mudado enquanto o token era buscado: gravar o token
+    // de outro servidor deixa a extensão com 401 em tudo, sem nenhum aviso
+    const atual = await chrome.storage.local.get(STORAGE.serverUrl)
+    if (((atual[STORAGE.serverUrl] as string) || DEFAULT_SERVER_URL) !== url) return
     if (body.token !== stored[STORAGE.token]) {
       await chrome.storage.local.set({ [STORAGE.token]: body.token })
     }
