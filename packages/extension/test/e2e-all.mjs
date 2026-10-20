@@ -37,6 +37,8 @@ const TESTES = [
   "panel-save",
   "uso-real",
   "erro-gravacao",
+  // o painel tem que usar o token do servidor que ele aponta
+  "token-servidor",
   // permissão de host: base da gravação por extensão e da execução na aba
   "inject-host",
   "navegar-host",
@@ -211,10 +213,41 @@ async function subirServidor() {
   return { url, proc, dadosDir }
 }
 
+/**
+ * Constrói uma cópia particular da extensão para esta execução.
+ *
+ * O `dist` compartilhado é apagado no começo de cada build: um teste que está
+ * rodando com a extensão carregada perde os arquivos no meio do caminho e o
+ * painel deixa de abrir (`ERR_FILE_NOT_FOUND`). A cópia resolve — cada
+ * execução constrói a sua e ninguém atrapalha ninguém.
+ *
+ * Se `GRIVER_EXTENSION_PATH` vier de fora, ela manda: quem já tem uma cópia
+ * pronta não quer esperar outro build.
+ */
+async function construirExtensao() {
+  const informada = process.env.GRIVER_EXTENSION_PATH
+  if (informada) return informada
+
+  const pasta = mkdtempSync(join(tmpdir(), "griver-ext-"))
+  const caminho = resolve("packages/extension/build.mjs")
+
+  const codigo = await new Promise((resolveCodigo) => {
+    const proc = spawn(process.execPath, [caminho, "--outdir", pasta], {
+      stdio: "inherit",
+    })
+    proc.on("exit", (code) => resolveCodigo(code ?? 1))
+  })
+
+  if (codigo !== 0) throw new Error("a extensão não foi construída")
+  return pasta
+}
+
 let falhou = false
 
 const servidor = servidorInformado ? null : await subirServidor()
 const serverUrl = servidorInformado ?? servidor.url
+
+const extensionPath = await construirExtensao()
 
 // a página de teste é criada aqui: nenhum teste depende de um arquivo solto
 // em /tmp, que sumiria na primeira limpeza da máquina
@@ -230,7 +263,7 @@ for (const nome of TESTES) {
     const proc = spawn(process.execPath, [caminho, serverUrl, site.url], {
       stdio: "inherit",
       detached: true,
-      env: { ...process.env, TMPDIR: perfilBase },
+      env: { ...process.env, TMPDIR: perfilBase, GRIVER_EXTENSION_PATH: extensionPath },
     })
 
     // um teste travado segura o Chrome e o grupo de processos para sempre
@@ -271,6 +304,15 @@ try {
   rmSync(perfilBase, { recursive: true, force: true })
 } catch {
   //Profiles temporários podem ficar para trás; não é motivo para falhar.
+}
+
+// a cópia da extensão é nossa: some junto com a suíte
+if (!process.env.GRIVER_EXTENSION_PATH) {
+  try {
+    rmSync(extensionPath, { recursive: true, force: true })
+  } catch {
+    // a pasta temporária pode ficar para trás; não é motivo para falhar
+  }
 }
 
 if (falhou) {

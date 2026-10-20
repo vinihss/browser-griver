@@ -5,28 +5,42 @@ import { refreshProjects } from "./views/projects.js"
 const root = document.getElementById("root")
 if (!root) throw new Error("elemento #root não encontrado")
 
-// recupera as configurações salvas
-void chrome.storage.local.get(["griver.serverUrl", "griver.token"]).then((stored) => {
+mount(root)
+
+/**
+ * Liga o painel ao servidor.
+ *
+ * A ordem importa. O endereço e o token saem do storage, mas o token é
+ * confirmado pelo service worker: ele o busca no servidor atual a cada
+ * consulta, e o que está no storage pode ser de outro servidor — ou de antes
+ * de o servidor trocar de token. Usar o token guardado como se fosse o
+ * certo leva 401 em toda chamada, e o painel abre vazio sem dizer o motivo.
+ */
+async function iniciar(): Promise<void> {
+  // recupera as configurações salvas
+  const stored = await chrome.storage.local.get(["griver.serverUrl", "griver.token"])
   if (stored["griver.serverUrl"]) state.serverUrl = stored["griver.serverUrl"] as string
   if (stored["griver.token"]) state.token = stored["griver.token"] as string
   patch({})
-})
 
-// status inicial (o service worker garante o token antes de responder)
-void chrome.runtime
-  .sendMessage({ type: "panel:status" })
-  .then((response) => {
-    const status = response as { status?: string; token?: string }
-    if (status?.status) patch({ status: status.status as never })
-    if (status?.token && !state.token) patch({ token: status.token })
-    // sempre carregar projetos ao abrir o painel, para que projetos gravados
-    // sejam carregados automaticamente
-    void refreshProjects()
+  // status inicial (o service worker garante o token antes de responder)
+  const response = (await chrome.runtime.sendMessage({ type: "panel:status" })) as {
+    status?: string
+    token?: string
+  }
+  if (response?.status) patch({ status: response.status as never })
+  if (response?.token) patch({ token: response.token })
+  patch({})
 
-    // Verificar se o servidor está respondendo
-    verificarServidorConectado()
-  })
-  .catch(() => undefined)
+  // sempre carregar projetos ao abrir o painel, para que projetos gravados
+  // sejam carregados automaticamente
+  await refreshProjects()
+
+  // Verificar se o servidor está respondendo
+  await verificarServidorConectado()
+}
+
+void iniciar().catch(() => undefined)
 
 /**
  * Verifica se o servidor está respondendo.
@@ -124,5 +138,3 @@ async function verificarServidorConectado(): Promise<void> {
     }
   }
 }
-
-mount(root)

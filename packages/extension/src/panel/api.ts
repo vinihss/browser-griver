@@ -2,6 +2,28 @@ import type { ProjectSummary, Recipe, RecipeSummary, TargetKind } from "@griver/
 import { state } from "./state.js"
 
 /**
+ * Pede ao service worker o token do servidor atual.
+ *
+ * O service worker busca o token no servidor a cada consulta e devolve o que
+ * vale para ele: o token guardado pode ser de outro servidor, ou de antes de
+ * o servidor trocar de token.
+ */
+async function tokenAtual(): Promise<string> {
+  try {
+    const response = (await chrome.runtime.sendMessage({ type: "panel:status" })) as {
+      token?: string
+    }
+    if (response?.token) {
+      state.token = response.token
+      return response.token
+    }
+  } catch {
+    // o service worker ainda não respondeu
+  }
+  return state.token
+}
+
+/**
  * Garante que o painel tenha um token antes de chamar a API.
  *
  * O token é lido do servidor pelo service worker. Até ele responder, o
@@ -10,17 +32,10 @@ import { state } from "./state.js"
  */
 async function garantirToken(): Promise<void> {
   if (state.token) return
-  try {
-    const response = (await chrome.runtime.sendMessage({ type: "panel:status" })) as {
-      token?: string
-    }
-    if (response?.token) state.token = response.token
-  } catch {
-    // o service worker ainda não respondeu
-  }
+  await tokenAtual()
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, novaTentativa = true): Promise<T> {
   await garantirToken()
   const response = await fetch(`${state.serverUrl.replace(/\/$/, "")}${path}`, {
     ...init,
@@ -33,6 +48,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await response.text()
   const body = text ? JSON.parse(text) : undefined
   if (!response.ok) {
+    // 401: o token em uso não vale para o servidor atual. Renova e tenta de
+    // novo uma vez — sem isso o painel abre vazio, sem dizer o motivo
+    if (response.status === 401 && novaTentativa) {
+      const antigo = state.token
+      const novo = await tokenAtual()
+      if (novo && novo !== antigo) return await request<T>(path, init, false)
+    }
     throw new Error(body?.error ?? `HTTP ${response.status}`)
   }
   return body as T

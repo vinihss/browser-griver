@@ -25,6 +25,8 @@ export class WsClient {
   private queue: ClientMessage[] = []
   /** conexão em andamento — evita abrir dois sockets ao mesmo tempo */
   private pending: Promise<void> | undefined
+  /** servidor do socket aberto — muda quando o painel troca o endereço */
+  private serverUrl = ""
 
   constructor(private readonly options: WsClientOptions) {}
 
@@ -35,27 +37,33 @@ export class WsClient {
 
   async connect(): Promise<void> {
     this.closed = false
+
+    const { url } = await this.options.getUrl()
+    // o socket aberto pode ser de outro servidor: mantê-lo prende a extensão
+    // no endereço antigo — o painel trocou o servidor e nada acontece
+    if (this.socket && this.serverUrl !== url) this.closeSocket()
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return
 
     // duas chamadas concorrentes compartilhariam a mesma promessa: sem isso,
     // cada uma abriria um socket e o servidor passaria a enviar os mesmos
     // eventos duas vezes — duplicando passos na gravação
     if (this.pending) return this.pending
-    this.pending = this.openSocket().finally(() => {
+    this.pending = this.openSocket(url).finally(() => {
       this.pending = undefined
     })
     return this.pending
   }
 
-  private async openSocket(): Promise<void> {
+  private async openSocket(serverUrl: string): Promise<void> {
     this.options.onStatus("connecting")
 
-    const { url, token } = await this.options.getUrl()
-    const target = `${url.replace(/^http/, "ws").replace(/\/$/, "")}${WS_PATH}`
+    const { token } = await this.options.getUrl()
+    const target = `${serverUrl.replace(/^http/, "ws").replace(/\/$/, "")}${WS_PATH}`
 
     try {
       const socket = new WebSocket(target)
       this.socket = socket
+      this.serverUrl = serverUrl
 
       socket.onopen = () => {
         this.attempts = 0
@@ -127,8 +135,25 @@ export class WsClient {
     this.closed = true
     clearTimeout(this.timer)
     this.stopHeartbeat()
-    this.socket?.close()
+    this.closeSocket()
+  }
+
+  /**
+   * Fecha o socket atual sem agendar reconexão.
+   *
+   * Os handlers saem antes do fechamento: o `onclose` do socket velho
+   * dispararia depois do novo abrir e pararia o heartbeat do socket novo.
+   */
+  private closeSocket(): void {
+    const socket = this.socket
     this.socket = undefined
+    this.serverUrl = ""
+    if (!socket) return
+    socket.onopen = null
+    socket.onmessage = null
+    socket.onclose = null
+    socket.onerror = null
+    socket.close()
   }
 }
 

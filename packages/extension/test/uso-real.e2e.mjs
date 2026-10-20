@@ -9,7 +9,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -40,12 +40,9 @@ await panel.goto(`chrome-extension://${new URL(worker.url()).host}/panel.html`)
 // o painel é um módulo: espera o header existir antes de conferir a tela
 await panel.waitForSelector(".panel-header", { timeout: 15000 })
 
-// espera a extensão conectar sozinha ao servidor
-let online = false
-for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
-  await panel.waitForTimeout(500)
-  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
-}
+// a extensão nasce conectada ao servidor padrão: é preciso reconectar para
+// que ela aponte para o servidor do teste e renove o token
+const online = await conectar(panel, serverUrl)
 console.log("0. conectado ao servidor:", online ? "sim" : "NÃO")
 
 const token = await panel.evaluate(async () => {
@@ -103,34 +100,59 @@ const receita = (
 ).body.recipe
 
 await page.bringToFront()
-// executa pela UI, como o usuário faz
-await panel.evaluate(
-  async ([id]) => {
-    document.querySelector('.panel-header button[title="Receitas"]')?.click()
-    await new Promise((r) => setTimeout(r, 600))
-    // seleciona a receita na lista
-    const itens = Array.from(document.querySelectorAll(".recipe-row .truncate"))
-    const alvo = itens.find((b) => b.textContent?.includes("Fluxo"))
-    alvo?.parentElement?.click()
-    await new Promise((r) => setTimeout(r, 800))
-    Array.from(document.querySelectorAll("button"))
-      .find((b) => b.textContent?.trim() === "Executar aqui")
-      ?.click()
-    return id
-  },
-  [receita.id],
-)
 
-let resultado = ""
+// a lista do painel só recebe a receita nova quando o servidor avisa que
+// ela mudou. Sem esperar, o clique cai na receita que já estava na lista —
+// e o teste passa a rodar o passo errado sem perceber
+let naLista = false
+for (let tentativa = 0; tentativa < 20 && !naLista; tentativa++) {
+  await panel.waitForTimeout(500)
+  naLista = await panel.evaluate(() =>
+    Array.from(document.querySelectorAll(".recipe-row .truncate")).some(
+      (b) => b.textContent?.trim() === "Fluxo",
+    ),
+  )
+}
+console.log("2. receita nova na lista do painel:", naLista ? "sim" : "NÃO")
+
+// executa pela UI, como o usuário faz
+await panel.evaluate(async () => {
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
+  await new Promise((r) => setTimeout(r, 600))
+  // seleciona a receita na lista
+  const alvo = Array.from(document.querySelectorAll(".recipe-row .truncate")).find(
+    (b) => b.textContent?.trim() === "Fluxo",
+  )
+  alvo?.parentElement?.click()
+})
+// o editor abre depois do clique: sem esperar, o botão ainda não existe
+await panel.waitForTimeout(1000)
+
+const disparou = await panel.evaluate(() => {
+  const botao = Array.from(document.querySelectorAll("button")).find(
+    (b) => b.textContent?.trim() === "Executar aqui",
+  )
+  if (!botao) return false
+  botao.click()
+  return true
+})
+console.log("3. execução disparada:", disparou ? "sim" : "NÃO")
+
+// espera a execução acabar: o que vale é o registro no servidor, não o
+// texto da página (que já pode ter o conteúdo de outra execução)
+let ultimo = null
 for (let i = 0; i < 40; i++) {
-  await new Promise((r) => setTimeout(r, 500))
-  resultado = await page.evaluate(() => document.querySelector("#resultado")?.textContent ?? "").catch(() => "")
-  if (resultado) break
+  await panel.waitForTimeout(500)
+  const runs = (await api("/api/runs")).body.runs ?? []
+  ultimo = runs.find((r) => r.recipeId === receita.id) ?? null
+  if (ultimo && ultimo.status !== "running") break
 }
 
-const runs = (await api("/api/runs")).body.runs
-const ultimo = runs.find((r) => r.recipeId === receita.id)
-console.log("2. execução:", ultimo?.status, "| erro:", ultimo?.error ?? "nenhum")
+const resultado = await page
+  .evaluate(() => document.querySelector("#resultado")?.textContent ?? "")
+  .catch(() => "")
+
+console.log("4. execução:", ultimo?.status ?? "nenhuma", "| erro:", ultimo?.error ?? "nenhum")
 console.log("   resultado na página:", JSON.stringify(resultado))
 
 // ── 3. primeira mensagem do chat ──────────────────────────────────────────
@@ -157,7 +179,7 @@ for (let tentativa = 0; tentativa < 60; tentativa++) {
   )
   if (bolhas.some((b) => b?.includes("próximo passo"))) break
 }
-console.log("3. mensagens no chat:", JSON.stringify(bolhas.slice(0, 4)))
+console.log("5. mensagens no chat:", JSON.stringify(bolhas.slice(0, 4)))
 
 const enviou = bolhas.some((b) => b?.includes("próximo passo"))
 const respondeu = bolhas.some((b) => b?.includes("assistente") || b?.includes("sistema"))
@@ -168,8 +190,8 @@ await api(`/api/projects/${projeto.id}`, { method: "DELETE" }).catch((error) => 
 })
 await context.close()
 
-console.log(`\nprojetos: ${anotados > 0 ? "ok" : "FALHOU"}`)
+console.log(`\nreceitas: ${naLista ? "ok" : "FALHOU"}`)
 console.log(`execução: ${ultimo?.status === "ok" ? "ok" : "FALHOU"}`)
 console.log(`chat: ${enviou ? "mensagem não se perdeu" : "FALHOU"} / ${respondeu ? "respondeu" : "sem resposta (verifique o OpenCode)"}`)
 
-process.exit(anotados > 0 && ultimo?.status === "ok" && enviou ? 0 : 1)
+process.exit(naLista && ultimo?.status === "ok" && enviou ? 0 : 1)
