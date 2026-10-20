@@ -5,7 +5,7 @@
  * página, e a página morre a cada navegação — mas a gravação precisa
  * sobreviver a ela, senão o primeiro passo de qualquer receita se perde.
  *
- * Uso: node packages/extension/test/overlay.e2e.mjs [serverUrl]
+ * Uso: node packages/extension/test/overlay.e2e.mjs <serverUrl>
  */
 import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"

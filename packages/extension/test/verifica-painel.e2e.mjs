@@ -8,7 +8,7 @@
  *  - o botão "+" abre o modal "Add New Script";
  *  - o Chat alterna com Receitas no mesmo painel.
  *
- * Uso: node packages/extension/test/verifica-painel.e2e.mjs [serverUrl]
+ * Uso: node packages/extension/test/verifica-painel.e2e.mjs <serverUrl>
  */
 import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"

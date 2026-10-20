@@ -4,7 +4,7 @@
  * Grava uma receita, para, abre o modal pelo `+` do painel, preenche Name e
  * URL e confere se a receita chega ao servidor com o `startUrl` certo.
  *
- * Uso: node packages/extension/test/modal.e2e.mjs [serverUrl]
+ * Uso: node packages/extension/test/modal.e2e.mjs <serverUrl>
  */
 import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"

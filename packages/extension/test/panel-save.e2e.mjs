@@ -5,7 +5,7 @@
  * com a página, para a gravação pelo overlay, edita no painel e salva — e
  * confere se os passos gravados realmente chegaram ao servidor.
  *
- * Uso: node packages/extension/test/panel-save.e2e.mjs [serverUrl] [targetUrl]
+ * Uso: node packages/extension/test/panel-save.e2e.mjs <serverUrl> [targetUrl]
  */
 import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
