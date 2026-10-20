@@ -1,0 +1,102 @@
+import type { ProjectSummary, Recipe, RecipeSummary, TargetKind } from "@griver/core"
+import { state } from "./state.js"
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${state.serverUrl.replace(/\/$/, "")}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Griver-Token": state.token,
+      ...(init.headers ?? {}),
+    },
+  })
+  const text = await response.text()
+  const body = text ? JSON.parse(text) : undefined
+  if (!response.ok) {
+    throw new Error(body?.error ?? `HTTP ${response.status}`)
+  }
+  return body as T
+}
+
+export async function loadProjects(): Promise<ProjectSummary[]> {
+  const result = await request<{ projects: ProjectSummary[] }>("/api/projects")
+  return result.projects
+}
+
+export async function createProject(name: string, description?: string): Promise<ProjectSummary> {
+  const result = await request<{ project: ProjectSummary }>("/api/projects", {
+    method: "POST",
+    body: JSON.stringify({ name, description }),
+  })
+  return result.project
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await request(`/api/projects/${id}`, { method: "DELETE" })
+}
+
+export async function loadRecipes(projectId?: string): Promise<RecipeSummary[]> {
+  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""
+  const result = await request<{ recipes: RecipeSummary[] }>(`/api/recipes${query}`)
+  return result.recipes
+}
+
+export async function loadRecipe(id: string): Promise<{ summary: RecipeSummary; body: Recipe }> {
+  return await request(`/api/recipes/${id}`)
+}
+
+export async function createRecipe(input: {
+  projectId: string
+  name: string
+  target: TargetKind
+  recipe: Recipe
+}): Promise<RecipeSummary> {
+  const result = await request<{ recipe: RecipeSummary }>("/api/recipes", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+  return result.recipe
+}
+
+export async function updateRecipe(
+  id: string,
+  patchData: { name?: string; target?: TargetKind; recipe?: Recipe },
+): Promise<RecipeSummary> {
+  const result = await request<{ recipe: RecipeSummary }>(`/api/recipes/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patchData),
+  })
+  return result.recipe
+}
+
+export async function deleteRecipe(id: string): Promise<void> {
+  await request(`/api/recipes/${id}`, { method: "DELETE" })
+}
+
+export async function validateRecipe(recipe: Recipe, target: TargetKind) {
+  const result = await request<{ issues: { path: string; message: string; severity: string }[] }>(
+    "/api/validate",
+    { method: "POST", body: JSON.stringify({ recipe, target }) },
+  )
+  return result.issues
+}
+
+export async function compileRecipe(id: string, target: TargetKind): Promise<string> {
+  const result = await request<{ code: string }>(`/api/recipes/${id}/compile`, {
+    method: "POST",
+    body: JSON.stringify({ target }),
+  })
+  return result.code
+}
+
+export async function startServerRun(recipeId: string, driver: string) {
+  return await request<{ runId: string }>("/api/runs", {
+    method: "POST",
+    body: JSON.stringify({ recipeId, driver }),
+  })
+}
+
+export async function listRuns() {
+  const result = await request<{ runs: import("@griver/core").RunSummary[] }>("/api/runs")
+  return result.runs
+}

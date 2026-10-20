@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist-types",
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": [],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@griver/core": ["../core/dist/index.d.ts"],
+      "@griver/core/runtime": ["../core/dist/runtime/index.d.ts"],
+      "@griver/core/protocol": ["../core/dist/protocol/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+}

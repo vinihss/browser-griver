@@ -1,0 +1,42 @@
+{
+  "name": "@griver/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "default": "./dist/protocol/index.js"
+    },
+    "./recipe/steps": {
+      "types": "./dist/recipe/steps.d.ts",
+      "default": "./dist/recipe/steps.js"
+    },
+    "./recipe/validate": {
+      "types": "./dist/recipe/validate.d.ts",
+      "default": "./dist/recipe/validate.js"
+    },
+    "./recipe/schema": {
+      "types": "./dist/recipe/schema.d.ts",
+      "default": "./dist/recipe/schema.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}

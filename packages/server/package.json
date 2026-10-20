@@ -1,0 +1,57 @@
+{
+  "name": "@griver/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "griver-server": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./opencode/client": {
+      "types": "./dist/opencode/client.d.ts",
+      "default": "./dist/opencode/client.js"
+    },
+    "./opencode/bridge": {
+      "types": "./dist/opencode/bridge.d.ts",
+      "default": "./dist/opencode/bridge.js"
+    },
+    "./drivers/playwright": {
+      "types": "./dist/drivers/playwright.d.ts",
+      "default": "./dist/drivers/playwright.js"
+    },
+    "./drivers/firecrawl": {
+      "types": "./dist/drivers/firecrawl.d.ts",
+      "default": "./dist/drivers/firecrawl.js"
+    },
+    "./server-runner": {
+      "types": "./dist/server-runner.d.ts",
+      "default": "./dist/server-runner.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "default": "./dist/db/index.js"
+    },
+    "./db/repo": {
+      "types": "./dist/db/repo.d.ts",
+      "default": "./dist/db/repo.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@griver/core": "workspace:*",
+    "ws": "8.21.3",
+    "zod": "4.4.3"
+  },
+  "optionalDependencies": {
+    "playwright": "1.63.0"
+  }
+}

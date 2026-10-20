@@ -1,0 +1,39 @@
+{
+  "name": "griver",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Automatizador de browser local com extensão de navegador conectada, gravação de ações e assistente de IA",
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "vendor": "node scripts/vendor-offline.mjs",
+    "build": "node scripts/build.mjs",
+    "build:ext": "node packages/extension/build.mjs",
+    "typecheck": "tsc -b packages/core packages/server packages/cli",
+    "dev:server": "tsx packages/server/src/main.ts",
+    "dev:cli": "tsx packages/cli/src/index.ts",
+    "test": "tsx --test packages/core/test/*.test.ts packages/server/test/*.test.ts",
+    "test:e2e:browser": "node packages/extension/test/manual-e2e.mjs",
+    "test:e2e:painel": "node packages/extension/test/panel-save.e2e.mjs",
+    "test:e2e:injecao": "node packages/extension/test/inject-host.e2e.mjs",
+    "test:e2e:erro": "node packages/extension/test/erro-gravacao.e2e.mjs",
+    "test:e2e:chat": "node packages/server/test/chat.e2e.mjs",
+    "test:e2e:uso": "node packages/extension/test/uso-real.e2e.mjs",
+    "opencode": "opencode"
+  },
+  "dependencies": {
+    "playwright": "1.63.0",
+    "ws": "8.21.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}

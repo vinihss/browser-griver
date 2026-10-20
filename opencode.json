@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agents": {
+    "griver": {
+      "description": "Assistente de automação de browser do Griver: edita receitas e ajuda a montar scripts",
+      "mode": "primary",
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "allow" },
+        { "action": "browser.click", "resource": "*", "effect": "ask" },
+        { "action": "browser.fill", "resource": "*", "effect": "ask" }
+      ]
+    }
+  }
+}

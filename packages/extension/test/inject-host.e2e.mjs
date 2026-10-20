@@ -1,0 +1,58 @@
+/**
+ * Confere a permissão de host: o service worker precisa poder injetar o
+ * content script em qualquer página, inclusive nas que já estavam abertas
+ * antes da extensão ser carregada.
+ *
+ * Usa `[::1]` de propósito: não é 127.0.0.1 nem localhost, então só funciona
+ * com host_permissions amplo.
+ */
+import { chromium } from "playwright"
+import { createServer } from "node:http"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
+
+const extensionPath = resolve("packages/extension/dist")
+
+const server = createServer((_req, res) => {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+  res.end("<!doctype html><title>Teste</title><button id='b'>Botão</button>")
+})
+await new Promise((resolve_) => server.listen(8099, "::1", () => resolve_()))
+
+const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-perm-")), {
+  headless: false,
+  args: [
+    `--disable-extensions-except=${extensionPath}`,
+    `--load-extension=${extensionPath}`,
+    "--no-first-run",
+  ],
+})
+
+let worker = context.serviceWorkers()[0]
+if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })
+
+const page = await context.newPage()
+await page.goto("http://[::1]:8099/")
+await page.waitForTimeout(800)
+
+const resultado = await worker.evaluate(async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id) return { erro: "sem aba ativa" }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] })
+    const r = await chrome.tabs.sendMessage(tab.id, {
+      type: "griver:page",
+      command: { action: "context" },
+    })
+    return { ok: true, titulo: r?.result?.title }
+  } catch (error) {
+    return { ok: false, erro: String(error) }
+  }
+})
+
+console.log("injeção em página fora de localhost:", JSON.stringify(resultado))
+
+await context.close()
+server.close()
+process.exit(resultado.ok ? 0 : 1)

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+data/
+!data/.gitkeep
+packages/extension/dist/
+packages/extension/src/manifest.json.bak
+.DS_Store
+.env
+.env.*
+*.log

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -e
+
+echo "========================================="
+echo "📦 Build completo do Griver"
+echo "========================================="
+cd /home/vinicius/browser-griver
+
+# Step 1: Build core package
+echo ""
+echo "1️⃣ Building @griver/core..."
+pnpm --filter @griver/core run build
+
+# Step 2: Build extension
+echo ""
+echo "2️⃣ Building @griver/extension..."
+pnpm --filter @griver/extension run build
+
+# Step 3: Build server
+echo ""
+echo "3️⃣ Building @griver/server..."
+pnpm --filter @griver/server run build
+
+# Step 4: Create ZIP
+echo ""
+echo "4️⃣ Creating extension ZIP..."
+rm -f griver-extension.zip
+zip -j griver-extension.zip \
+  packages/extension/manifest.json \
+  packages/extension/dist/background.js \
+  packages/extension/dist/content.js \
+  packages/extension/dist/panel.html \
+  packages/extension/dist/panel.js \
+  packages/extension/dist/styles.css
+
+echo ""
+echo "========================================="
+echo "✅ Build completo!"
+echo "========================================="
+echo "• Core: packages/core/dist/"
+echo "• Extension: packages/extension/dist/"
+echo "• Server: packages/server/dist/"
+echo "• ZIP: griver-extension.zip"
+echo ""
+
+echo "========================================="
+echo "🚀 Iniciando servidor Griver"
+echo "========================================="
+# Mata qualquer servidor antigo na porta 7331
+fuser -k 7331/tcp 2>/dev/null || true
+sleep 1
+
+# Inicia o servidor usando pnpm exec from the server package directory
+# A chave é usar o working directory correto para resolução de módulos
+cd /home/vinicius/browser-griver/packages/server
+pnpm exec tsx src/main.ts &
+SERVER_PID=$!
+
+# Volta ao diretório raiz
+cd /home/vinicius/browser-griver
+
+# Aguarda o servidor estar pronto
+sleep 3
+
+echo ""
+echo "========================================="
+echo "✅ Servidor rodando!"
+echo "========================================="
+echo "• URL: http://127.0.0.1:7331"
+echo "• Token será gerado automaticamente"
+echo ""
+
+echo "========================================="
+echo "🔧 Desenvolvimento: Atualizações de Código"
+echo "========================================="
+echo "⚠️  Se você modificar arquivos TypeScript (.ts),"
+echo "   será necessário reexecutar o build para ver"
+echo "   as mudanças refletidas na extensão."
+echo ""
+echo "   Para rebuilder rapidamente:"
+echo "   1. Pressione Ctrl+C para parar este script"
+echo "   2. Execute: bash start-all.sh"
+echo ""
+echo "   Ou para desenvolvimento rápido, use:"
+echo "   - pnpm --filter @griver/extension run build (extensão)"
+echo "   - pnpm --filter @griver/server run build (servidor)"
+echo ""
+
+echo "========================================="
+echo "🔧 Como configurar a extensão"
+echo "========================================="
+echo "1. Abra o Chrome e vá em chrome://extensions/"
+echo "2. Ative 'Modo de desenvolvedor' (toggle no canto superior direito)"
+echo "3. Clique em 'Carregar extensão não compactada'"
+echo "4. Selecione: packages/extension/dist/"
+echo ""
+echo "💡 A extensão conectará automaticamente ao servidor"
+echo "   e projetos gravados serão carregados ao abrir o painel!"
+echo ""
+
+echo "========================================="
+echo "📦 Extensão pronta: griver-extension.zip"
+echo "========================================="
+echo "• Local: /home/vinicius/browser-griver/griver-extension.zip"
+echo ""
+
+# Aguarda interrupção - usa trap para limpeza
+trap 'echo "Parando servidor..."; kill $SERVER_PID 2>/dev/null; exit' INT TERM
+
+# Mantém o script rodando
+while true; do
+  sleep 60
+done

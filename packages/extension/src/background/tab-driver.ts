@@ -1,0 +1,192 @@
+import type {
+  Driver,
+  Expect,
+  ExtractAttr,
+  ExtractResult,
+  ScreenshotResult,
+  TargetRef,
+} from "@griver/core/runtime"
+import { INTERNAL } from "../shared/constants.js"
+
+/**
+ * Driver que executa a receita na aba do navegador.
+ *
+ * Cada operação é enviada ao content script da aba; a navegação é tratada
+ * aqui porque destrói o contexto do content script.
+ */
+export class TabDriver implements Driver {
+  readonly target = "browser" as const
+
+  constructor(private readonly tabId: number) {}
+
+  async navigate(url: string): Promise<void> {
+    try {
+      await chrome.tabs.update(this.tabId, { url })
+    } catch {
+      // Algumas versões do Chrome recusam `tabs.update` sem permissão de host
+      // ("Navigation rejected."). O content script já está na página e consegue
+      // navegar de qualquer forma.
+      await injectRecorder(this.tabId)
+      try {
+        await chrome.tabs.sendMessage(this.tabId, {
+          type: INTERNAL.pageCommand,
+          command: { action: "navigate", payload: { url } },
+        })
+      } catch {
+        // a própria navegação derruba o content script; seguir para o load
+      }
+    }
+    await waitForLoad(this.tabId)
+  }
+
+  async click(target: TargetRef, options?: { clickCount?: number; force?: boolean }): Promise<void> {
+    await this.send({ type: "click", target, clickCount: options?.clickCount, force: options?.force })
+  }
+
+  async fill(target: TargetRef, value: string): Promise<void> {
+    await this.send({ type: "fill", target, value })
+  }
+
+  async press(target: TargetRef | undefined, key: string): Promise<void> {
+    await this.send({ type: "press", target, key })
+  }
+
+  async select(target: TargetRef, value: string): Promise<void> {
+    await this.send({ type: "select", target, value })
+  }
+
+  async hover(target: TargetRef): Promise<void> {
+    await this.send({ type: "hover", target })
+  }
+
+  async scrollTo(target: TargetRef | undefined, position?: "top" | "bottom" | "center"): Promise<void> {
+    await this.send({ type: "scrollTo", target, position })
+  }
+
+  async upload(target: TargetRef, files: string[]): Promise<void> {
+    await this.send({ type: "upload", target, files })
+  }
+
+  async wait(ms: number): Promise<void> {
+    await this.send({ type: "wait", ms })
+  }
+
+  async waitFor(
+    target: TargetRef,
+    state?: "visible" | "hidden" | "attached",
+    timeout?: number,
+  ): Promise<void> {
+    await this.send({ type: "waitFor", target, state, timeout })
+  }
+
+  async extract(target: TargetRef, attr: ExtractAttr | undefined, many: boolean): Promise<ExtractResult> {
+    const result = await this.send({ type: "extract", target, attr, many })
+    return result as ExtractResult
+  }
+
+  async assert(target: TargetRef | undefined, expect: Expect, scope: Record<string, unknown>): Promise<void> {
+    await this.send({ type: "assert", target, expect, scope })
+  }
+
+  async eval(code: string): Promise<unknown> {
+    return await this.send({ type: "script", code })
+  }
+
+  async screenshot(): Promise<ScreenshotResult> {
+    const dataUrl = await chrome.tabs.captureVisibleTab(this.tabId)
+    const base64 = dataUrl.split(",")[1]
+    return { base64, mimeType: "image/png" }
+  }
+
+  async currentUrl(): Promise<string> {
+    const tab = await chrome.tabs.get(this.tabId)
+    return tab.url ?? ""
+  }
+
+  async close(): Promise<void> {
+    // a aba do usuário permanece aberta
+  }
+
+  /** Envia um passo ao content script e devolve o resultado. */
+  private async send(command: Record<string, unknown>): Promise<unknown> {
+    try {
+      const response = (await chrome.tabs.sendMessage(this.tabId, {
+        type: INTERNAL.execute,
+        command: { step: command },
+      })) as { ok: boolean; result?: unknown; error?: string } | undefined
+
+      if (!response) throw new Error("sem resposta do content script")
+      if (!response.ok) throw new Error(response.error ?? "erro ao executar o passo")
+      return response.result
+    } catch (error) {
+      if (isDisconnected(error)) {
+        // a página recarregou e o content script sumiu: injeta de novo
+        await injectRecorder(this.tabId)
+        const retry = (await chrome.tabs.sendMessage(this.tabId, {
+          type: INTERNAL.execute,
+          command: { step: command },
+        })) as { ok: boolean; result?: unknown; error?: string } | undefined
+        if (!retry?.ok) throw new Error(retry?.error ?? "content script indisponível")
+        return retry.result
+      }
+      throw error instanceof Error ? error : new Error(String(error))
+    }
+  }
+}
+
+/** Garante que o content script esteja presente na aba. */
+export async function injectRecorder(tabId: number): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: INTERNAL.pageCommand, command: { action: "context" } })
+    return
+  } catch {
+    // a aba pode ter sido aberta antes da extensão: injeta o script agora
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    })
+  } catch (error) {
+    const detalhe = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `não foi possível agir nesta página (${detalhe}). ` +
+        "Recarregue a aba e tente de novo; páginas internas do navegador não podem ser gravadas.",
+    )
+  }
+}
+
+/**
+ * Aguarda a aba terminar de carregar.
+ *
+ * A checagem imediata de `status === "complete"` resolve com a página antiga:
+ * depois de pedir a navegação, a aba ainda está completa por um instante. Por
+ * isso esperamos um pouco antes de começar a observar.
+ */
+export async function waitForLoad(tabId: number, timeoutMs = 30_000): Promise<void> {
+  const inicio = Date.now()
+  await new Promise((resolve) => setTimeout(resolve, 200))
+
+  while (Date.now() - inicio < timeoutMs) {
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      if (tab.status === "complete") return
+    } catch {
+      // aba fechada durante a navegação
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+
+  throw new Error("tempo esgotado aguardando o carregamento da página")
+}
+
+function isDisconnected(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    message.includes("Receiving end does not exist") ||
+    message.includes("message port closed") ||
+    message.includes("Extension context invalidated")
+  )
+}
