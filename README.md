@@ -190,6 +190,14 @@ valendo.
 (url, valor digitado, comparação). As condições aceitam `compare` (`==`, `!=`,
 `>`, `>=`, `<`, `<=`, `contains`, `matches`), `truthy`, `and`, `or` e `not`.
 
+## A API do servidor
+
+O servidor fala três protocolos: **REST** (JSON em `http://127.0.0.1:7331`),
+**WebSocket** (`/ws`, o canal da extensão) e **MCP** (stdio, o canal do
+assistente). A referência completa — cada endpoint, o handshake do
+WebSocket, as ferramentas do MCP e os exemplos de `curl` — está em
+[API.md](./API.md).
+
 ## CLI
 
 ```sh
@@ -246,7 +254,7 @@ o servidor.
 
 O assistente e a linha de comando usam a **mesma camada de operações**
 (`packages/server/src/ops.ts`): uma ação do Griver não pode se comportar de
-um jeito no terminal e de outro no assistente. São 29 ferramentas no MCP
+um jeito no terminal e de outro no assistente. São 30 ferramentas no MCP
 (`griver_recipe_new`, `griver_page_click`, `griver_record_start`…), com o
 mesmo resultado e o mesmo texto de erro.
 
