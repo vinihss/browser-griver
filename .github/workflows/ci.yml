@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# O CI é a prova de que o caminho de instalação funciona: um clone novo
+# instala, compila, passa nos testes e empacota. É o que a tarefa `setup`
+# faz na máquina de quem programa — aqui ela roda sozinha, sem ninguém
+# para conferir se o ambiente está no jeito.
+jobs:
+  verify:
+    name: Verificar (tipos, testes, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # A versão do pnpm vem do `packageManager` do package.json — repetir
+      # o número aqui seria mais um lugar para o lockfile e o CI divergirem.
+      - uses: pnpm/action-setup@v4
+
+      # Node 24: o `node:sqlite` (o banco do Griver) vem sem flag
+      # experimental a partir do Node 22.13, e é o que a máquina de
+      # desenvolvimento usa.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Conferir os tipos
+        run: pnpm typecheck
+
+      - name: Conferir os tipos da extensão
+        run: pnpm typecheck:ext
+
+      - name: Testes
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # O zip é o artefato de distribuição da extensão: gerá-lo aqui
+      # pega o empacotamento quebrado antes de ele chegar a quem instala.
+      - name: Empacotar a extensão
+        run: pnpm package
+
+  e2e:
+    name: End-to-end (Chromium de verdade)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Job separado: a suíte abre um navegador por teste e é a parte mais
+    # pesada do CI. Falhar nela não deve esconder a falha do código.
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      # O Chromium completo, não o "headless shell": só o binário completo
+      # carrega extensão MV3, e sem ele o service worker nunca aparece.
+      - name: Instalar o navegador
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Suíte end-to-end
+        run: pnpm test:e2e:all

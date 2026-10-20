@@ -33,20 +33,55 @@ ajuda a montar e estender esses scripts.
 ## Instalação
 
 ```sh
-pnpm install          # com rede
-pnpm vendor           # sem rede: copia os pacotes disponíveis na máquina
-pnpm build            # compila core, server, cli e a extensão
+pnpm bootstrap
 ```
 
-O `vendor` existe porque o ambiente de desenvolvimento pode não ter acesso ao
-registry npm. Ele copia `zod`, `ws`, `typescript`, `esbuild`, `tsx` e
-`playwright` de cópias locais e cria os links do workspace.
+Um comando só: instala as dependências, compila o core, o servidor, a CLI e
+a extensão, linka o `griver` no diretório global de binários — para o
+comando existir em qualquer pasta — e gera o `griver-extension.zip`.
+
+Ele tenta o `pnpm install` primeiro. Sem acesso ao registry npm — o caso do
+ambiente de desenvolvimento desta máquina — ele recorre ao
+`scripts/vendor-offline.mjs`, que copia os pacotes disponíveis na máquina.
+As fontes do vendor podem ser apontadas com `GRIVER_VENDOR_SOURCES`
+(separadas por `:`).
+
+Para desfazer o link global:
+
+```sh
+npm unlink -g @griver/cli
+```
+
+### As tarefas
+
+Todas moram em `scripts/tasks.mjs` — um lugar só. De dentro do projeto, os
+atalhos são `pnpm <tarefa>`; o mesmo caminho pelo repositório é
+`./bin/griver <tarefa>`.
+
+| Tarefa | O que faz |
+|---|---|
+| `pnpm bootstrap` | o caminho completo: instala, compila, linka e empacota |
+| `pnpm deps` | só as dependências (pnpm, com o vendor offline de reserva) |
+| `pnpm build` | compila core, server, cli e a extensão |
+| `pnpm typecheck` | confere os tipos de tudo, inclusive da extensão |
+| `pnpm test` | os testes unitários dos três pacotes |
+| `pnpm test:e2e:all` | a suíte end-to-end (Chromium de verdade, headless) |
+| `pnpm package` | gera o `griver-extension.zip` |
+| `pnpm link-cli` | linka o `griver` no diretório global de binários |
+| `pnpm clean` | remove `dist`, `tsbuildinfo` e o zip |
+| `pnpm dev:server` | sobe o servidor local |
+| `pnpm dev:cli` | roda a CLI a partir do fonte |
+| `pnpm dev` | extensão em watch + servidor no ar |
+
+> Os nomes fogem dos comandos reservados do pnpm: `setup`, `install` e
+> `link` já são comandos do pnpm (`pnpm setup` instala o pnpm globalmente),
+> e um atalho com o mesmo nome faria outra coisa.
 
 ## Colocando de pé
 
 ```sh
 # 1. suba o servidor (imprime o token)
-pnpm dev:server
+griver serve
 # griver 0.1.0 ouvindo em http://127.0.0.1:7331
 #   dados:    /caminho/do/projeto/data
 #   token:    Gey1-t9cbw-GJlZx2UnoruawIYMPOgiE
@@ -59,6 +94,11 @@ pnpm dev:server
 # 3. no painel lateral (ícone do Griver na barra), aba "Ajustes":
 #    confirme o endereço e clique em Conectar
 ```
+
+> O servidor precisa subir a partir da raiz do projeto: a pasta de dados
+> (`./data`) sai do diretório de onde o comando foi chamado, e é ela que o
+> CLI e a extensão procuram. `pnpm dev:server` faz o mesmo, a partir da
+> raiz.
 
 > O token é buscado automaticamente pela extensão. Ele continua sendo exigido
 > pela API (protege as receitas contra páginas da web) — só não precisa mais ser
@@ -199,6 +239,9 @@ WebSocket, as ferramentas do MCP e os exemplos de `curl` — está em
 [API.md](./API.md).
 
 ## CLI
+
+O `griver` fica disponível em qualquer pasta depois do `pnpm bootstrap` (o
+link global é o que o coloca no `PATH`).
 
 ```sh
 griver serve [--port 7331] [--data-dir ./data]   # servidor + WebSocket
@@ -365,6 +408,8 @@ packages/core        AST da receita, interpretador, compiladores, protocolo WS
 packages/server      REST + WebSocket + SQLite + drivers + ponte OpenCode + MCP
 packages/cli         binário `griver`
 packages/extension   extensão MV3 (esbuild + TypeScript, sem framework)
+scripts/tasks.mjs    o ponto único das tarefas (install, build, test, e2e…)
+bin/griver           a entrada do repositório: tarefa ou CLI
 .opencode/agents/griver.md  agente do assistente
 ```
 

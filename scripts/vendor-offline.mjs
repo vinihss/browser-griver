@@ -5,20 +5,31 @@
  * O ambiente de desenvolvimento não tem acesso ao registry npm, então este
  * script copia os pacotes de fontes disponíveis na máquina. Com rede, o
  * `pnpm install` normal funciona e este script torna-se dispensável.
+ *
+ * As fontes vêm do `GRIVER_VENDOR_SOURCES` (separadas por `:`) quando ele
+ * existe. O padrão são as cópias que costumam existir na máquina de quem
+ * programa aqui — o caminho era fixo e passava a quebrar em qualquer
+ * outra conta.
  */
 import { existsSync, mkdirSync, cpSync, symlinkSync, rmSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const dest = join(root, "node_modules")
 
-/** fontes de pacotes disponíveis localmente */
-const SOURCES = [
-  "/home/vinicius/.local/share/Trash/files/node_modules",
-  "/home/vinicius/.config/opencode/node_modules",
-  "/home/vinicius/node_modules",
-]
+/** Fontes de pacotes disponíveis localmente. */
+const SOURCES = (
+  process.env.GRIVER_VENDOR_SOURCES ??
+  [
+    join(homedir(), ".local/share/Trash/files/node_modules"),
+    join(homedir(), ".config/opencode/node_modules"),
+    join(homedir(), "node_modules"),
+  ].join(":")
+)
+  .split(":")
+  .filter(Boolean)
 
 /** pacotes que o projeto usa de verdade */
 const PACKAGES = [
@@ -91,6 +102,16 @@ for (const pkg of ["core", "server", "cli"]) {
   rmSync(link, { recursive: true, force: true })
   symlinkSync(join("..", "..", "packages", pkg), link)
 }
+
+// o binário da CLI no `.bin` da raiz
+//
+// O link global (`npm link`) é o que deixa o comando `griver` disponível
+// em qualquer pasta; este é o atalho de dentro do projeto, para o `pnpm
+// exec griver` funcionar mesmo sem o link global. O alvo só existe depois
+// do build — até lá, o link aponta para o nada e o `pnpm exec` avisa.
+const cliBin = join(dest, ".bin", "griver")
+rmSync(cliBin, { force: true })
+symlinkSync(join("..", "..", "packages", "cli", "dist", "index.js"), cliBin)
 
 console.log(ok ? "\npronto" : "\ncom pendências (veja acima)")
 process.exit(ok ? 0 : 1)

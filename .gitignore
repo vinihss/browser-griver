@@ -9,3 +9,7 @@ packages/extension/src/manifest.json.bak
 .env
 .env.*
 *.log
+
+# o zip da extensão é artefato de build: `pnpm package` o gera a partir do
+# `dist` da extensão, e versioná-lo só traz ruído binário para cada build
+griver-extension.zip

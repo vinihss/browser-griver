@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+/**
+ * A entrada do repositório.
+ *
+ * Duas coisas moram aqui, e as duas são o mesmo produto:
+ *
+ * - as **tarefas** do projeto (`setup`, `build`, `test`, `e2e`, `package`,
+ *   `link`, `clean`, `dev`…) — o fluxo de trabalho de quem mexe no Griver;
+ * - a **CLI** (`serve`, `doctor`, `recipe`, `run`, `page`, `record`…) — o
+ *   produto que o usuário opera.
+ *
+ * O comando decide pelo primeiro argumento: se for uma tarefa, ela vai para
+ * `scripts/tasks.mjs`; se não for, é a CLI.
+ *
+ * Este arquivo é o ponto de entrada **dentro do repositório**. O comando
+ * global (`griver`), que o `npm link` cria, é a CLI — o `npm link` só
+ * consegue linkar o que está dentro do pacote, e o `bin` do CLI aponta
+ * para o `dist` dele. As tarefas, então, são `pnpm setup`, `pnpm test`… e
+ * `./bin/griver setup` para quem prefere o caminho do repositório.
+ *
+ * A CLI roda do `dist` quando ele existe e do fonte quando não — assim o
+ * comando funciona antes do primeiro build. O aviso de desatualização vem
+ * porque o `dist` velho é a confusão clássica: o código mudou, o comando
+ * não, e ninguém sabe por quê.
+ */
+import { spawnSync } from "node:child_process"
+import { existsSync, readdirSync, statSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+
+const aqui = dirname(fileURLToPath(import.meta.url))
+const raiz = resolve(aqui, "..")
+
+/**
+ * As tarefas do projeto — as mesmas de `scripts/tasks.mjs`.
+ *
+ * Os nomes fogem dos comandos reservados do pnpm (`setup`, `install`,
+ * `link`): com esses nomes, `pnpm setup` instalaria o pnpm globalmente em
+ * vez de preparar o Griver.
+ */
+const TAREFAS = new Set([
+  "bootstrap",
+  "deps",
+  "build",
+  "typecheck",
+  "test",
+  "e2e",
+  "package",
+  "link-cli",
+  "clean",
+  "serve",
+  "cli",
+  "dev",
+  "vendor",
+])
+
+const [primeiro, ...resto] = process.argv.slice(2)
+
+if (primeiro && TAREFAS.has(primeiro)) {
+  const resultado = spawnSync(
+    process.execPath,
+    [join(raiz, "scripts", "tasks.mjs"), primeiro, ...resto],
+    { stdio: "inherit", cwd: process.cwd() },
+  )
+  process.exit(resultado.status ?? 1)
+}
+
+// ── a CLI ───────────────────────────────────────────────────────────────────
+
+const dist = join(raiz, "packages", "cli", "dist", "index.js")
+
+if (existsSync(dist)) {
+  const desatualizado = maisNovoQue(join(raiz, "packages", "cli", "src"), carimboDoBuild())
+  if (desatualizado) {
+    console.error(
+      "aviso: o build do CLI está desatualizado — rode `pnpm build` para o comando global usar o código novo",
+    )
+  }
+  await import(pathToFileURL(dist).href)
+} else {
+  // sem build, o fonte na mão: o tsx roda o TypeScript direto
+  const tsx = join(raiz, "node_modules", ".bin", "tsx")
+  if (!existsSync(tsx)) {
+    console.error("o CLI não está compilado e o tsx não está instalado — rode `pnpm setup`")
+    process.exit(1)
+  }
+  const resultado = spawnSync(tsx, [join(raiz, "packages", "cli", "src", "index.ts"), ...process.argv.slice(2)], {
+    stdio: "inherit",
+    cwd: process.cwd(),
+  })
+  process.exit(resultado.status ?? 1)
+}
+
+/**
+ * O carimbo do último build.
+ *
+ * Comparar o fonte com um arquivo do `dist` não serve: o `tsc` reescreve
+ * só as saídas que mudaram, e o `index.js` continua com a data de uma
+ * compilação antiga mesmo depois de o build inteiro estar em dia. O
+ * `.tsbuildinfo` é o registro do build — ele muda sempre que o `tsc`
+ * compila, e é ele que diz a verdade.
+ */
+function carimboDoBuild() {
+  const info = join(raiz, "packages", "cli", "dist", ".tsbuildinfo")
+  return existsSync(info) ? info : join(raiz, "packages", "cli", "dist", "index.js")
+}
+
+/**
+ * O fonte é mais novo que o build?
+ *
+ * A comparação é por data de modificação: o `dist` mais velho que o fonte
+ * é a causa do "mudei o código e nada aconteceu".
+ */
+function maisNovoQue(pasta, referencia) {
+  if (!existsSync(pasta)) return false
+  const tempo = statSync(referencia).mtimeMs
+  for (const nome of readdirSync(pasta)) {
+    const caminho = join(pasta, nome)
+    if (statSync(caminho).isDirectory()) {
+      if (maisNovoQue(caminho, referencia)) return true
+      continue
+    }
+    if (statSync(caminho).mtimeMs > tempo) return true
+  }
+  return false
+}
