@@ -25,7 +25,10 @@ async function withServer(fn: (base: string) => Promise<void>) {
  * A lista cresce conforme as mensagens chegam — o teste inspeciona isso
  * para conferir quem recebeu o comando de execução.
  */
-async function connectExtension(base: string): Promise<{
+async function connectExtension(
+  base: string,
+  opcoes: { responder?: boolean } = {},
+): Promise<{
   socket: WebSocket
   received: ServerMessage[]
   send: (message: unknown) => void
@@ -33,6 +36,7 @@ async function connectExtension(base: string): Promise<{
   const url = `${base.replace(/^http/, "ws")}/ws`
   const socket = new WebSocket(url)
   const received: ServerMessage[] = []
+  const responder = opcoes.responder ?? true
 
   await new Promise<void>((resolve, reject) => {
     socket.on("open", resolve)
@@ -46,7 +50,7 @@ async function connectExtension(base: string): Promise<{
     // responde à execução como a extensão real faria: sem isso o
     // servidor segura o resultado por 120s e o processo do teste não
     // consegue encerrar
-    if (message.type === "run.request") {
+    if (message.type === "run.request" && responder) {
       socket.send(
         JSON.stringify({
           type: "run.result",
@@ -135,6 +139,43 @@ test("a execução na aba vai só para a extensão que pediu", async () => {
   })
 })
 
+test("uma execução por vez na aba: a segunda espera a primeira terminar", async () => {
+  await withServer(async (base) => {
+    const recipeId = await createRecipe(base)
+
+    // a extensão não responde sozinha: o teste decide quando cada execução
+    // acaba, senão as duas se atropelariam e a fila não teria o que provar
+    const extensao = await connectExtension(base, { responder: false })
+
+    const pedidos = () => extensao.received.filter((message) => message.type === "run.request")
+
+    try {
+      extensao.send({ type: "run.start", recipeId, driver: "tab" })
+      extensao.send({ type: "run.start", recipeId, driver: "tab" })
+
+      const chegou = await waitFor(() => pedidos().length >= 1)
+      assert.equal(chegou, true, "a primeira execução deve chegar à extensão")
+
+      // a segunda espera: duas execuções na mesma aba se atropelam — o
+      // navigate de uma apaga o DOM que a outra está lendo
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      assert.equal(pedidos().length, 1, "a segunda execução não pode entrar junto com a primeira")
+
+      // a primeira termina: a segunda entra
+      extensao.send({ type: "run.result", runId: pedidos()[0]!.runId, status: "ok", events: [] })
+
+      const liberou = await waitFor(() => pedidos().length >= 2)
+      assert.equal(liberou, true, "a segunda execução deve entrar depois que a primeira termina")
+      assert.notEqual(pedidos()[0]!.runId, pedidos()[1]!.runId, "são execuções diferentes")
+
+      // sem isso o servidor segura o resultado por 120s e o teste não acaba
+      extensao.send({ type: "run.result", runId: pedidos()[1]!.runId, status: "ok", events: [] })
+    } finally {
+      extensao.socket.terminate()
+    }
+  })
+})
+
 test("a execução via HTTP vai para uma única extensão", async () => {
   await withServer(async (base) => {
     const recipeId = await createRecipe(base)
@@ -167,6 +208,67 @@ test("a execução via HTTP vai para uma única extensão", async () => {
     } finally {
       primeira.socket.terminate()
       segunda.socket.terminate()
+    }
+  })
+})
+
+test("duas execuções na mesma aba não se atropelam", async () => {
+  await withServer(async (base) => {
+    const recipeId = await createRecipe(base)
+
+    // uma extensão só: as duas execuções caem na mesma aba
+    // ela não responde nada, para a primeira execução ficar em andamento
+    const extensao = await connectExtension(base, { responder: false })
+
+    const pedidos = () =>
+      extensao.received.filter((message) => message.type === "run.request")
+
+    try {
+      for (let i = 0; i < 2; i++) {
+        const response = await fetch(`${base}/api/runs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Griver-Token": TOKEN },
+          body: JSON.stringify({ recipeId, driver: "tab" }),
+        })
+        assert.equal(response.status, 200)
+      }
+
+      // a primeira execução chegou…
+      const primeiraChegou = await waitFor(() => pedidos().length >= 1)
+      assert.equal(primeiraChegou, true, "a primeira execução deve chegar à extensão")
+
+      // …e a segunda espera: a aba só aguenta uma receita por vez
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      assert.equal(
+        pedidos().length,
+        1,
+        "a segunda execução não pode entrar enquanto a primeira não termina",
+      )
+
+      // a primeira termina: a segunda entra em seguida
+      const primeira = pedidos()[0] as { runId: string }
+      extensao.send({
+        type: "run.result",
+        runId: primeira.runId,
+        status: "ok",
+        events: [],
+      })
+
+      const segundaChegou = await waitFor(() => pedidos().length >= 2, 5000)
+      assert.equal(segundaChegou, true, "a segunda execução entra depois da primeira")
+      assert.notEqual(pedidos()[1]?.runId, primeira.runId, "são execuções diferentes")
+
+      // a segunda também termina: sem isso o servidor segura o resultado
+      // por 120s e o processo do teste não consegue encerrar
+      const segunda = pedidos()[1] as { runId: string }
+      extensao.send({
+        type: "run.result",
+        runId: segunda.runId,
+        status: "ok",
+        events: [],
+      })
+    } finally {
+      extensao.socket.terminate()
     }
   })
 })
