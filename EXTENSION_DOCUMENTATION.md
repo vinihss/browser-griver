@@ -216,11 +216,52 @@ curl http://127.0.0.1:7331/api/health
 2. Certifique-se de estar carregando a pasta `dist/`, não o ZIP
 3. Verifique o console do Chrome (F12) por erros
 
+### Erro: "onRuntimeMessage is not defined" / "header is not defined"
+
+O painel abriu, mas o JavaScript quebrou na hora de renderizar.
+
+**Causa:** alguma função chamada em `app.ts` deixou de existir no arquivo — o
+`esbuild` empacota o bundle sem avisar, e o erro só aparece em runtime.
+
+**Como evitar:** rode o typecheck antes de buildar. Ele acusa função
+inexistente, símbolo não importado e variável fora de escopo:
+
+```bash
+pnpm --filter @griver/extension exec tsc --noEmit -p tsconfig.json
+```
+
+O `start-all.sh` já executa esse passo automaticamente (etapa `1b️⃣`).
+
+**Verificação completa do painel** (roda em um Chrome real via Playwright):
+
+```bash
+pnpm run dev:server              # em um terminal
+pnpm run test:e2e:verifica       # em outro
+```
+
+O teste confere header, abas, avisos, carregamento automático dos projetos e
+a navegação projeto → receitas → voltar, além de falhar se aparecer qualquer
+erro de runtime no console do painel.
+
 ### Projetos não carregam
 
 1. Verifique se o servidor tem projetos cadastrados
 2. Certifique-se de estar conectado ao servidor correto
 3. Tente recarregar a página do painel
+
+---
+
+## 🧭 Navegação entre telas
+
+```
+Projetos  ──clica no projeto──▶  Receitas  ──"Voltar para projetos"──▶  Projetos
+   ▲                                                                    │
+   └──────────────────────── "Projetos" na barra de abas ────────────────┘
+```
+
+A tela de receitas **não tem aba fixa** na barra. Ela é aberta ao clicar num
+projeto e o botão "Voltar para projetos" retorna para a lista. Isso evita a
+confusão de uma aba "Receitas" que não sabe qual projeto está selecionado.
 
 ---
 
