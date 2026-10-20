@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { guardiaoDaCadeia, vigiaGuardiao } from "../src/server-runner.js"
+import { createServer } from "node:net"
+import { guardiaoDaCadeia, vigiaGuardiao, esperarPortaLivre, portaLivre } from "../src/server-runner.js"
 
 /** Espera a condição ficar verdadeira, sem travar o teste se nunca ficar. */
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<boolean> {
@@ -77,4 +78,36 @@ test("o guardião de um processo vivo está vivo", () => {
   const guardiao = guardiaoDaCadeia()
   if (guardiao === undefined) return
   assert.doesNotThrow(() => process.kill(guardiao, 0))
+})
+
+test("a porta livre é reconhecida", async () => {
+  const porta = 47311
+  assert.equal(await portaLivre(porta, "127.0.0.1"), true, "ninguém escutando: a porta está livre")
+})
+
+test("a porta ocupada não é esperada como livre", async () => {
+  const porta = 47312
+  const ocupado = createServer()
+  await new Promise<void>((resolver) => ocupado.listen(porta, "127.0.0.1", resolver))
+
+  try {
+    assert.equal(await portaLivre(porta, "127.0.0.1"), false, "com alguém escutando, a porta não está livre")
+  } finally {
+    await new Promise<void>((resolver) => ocupado.close(() => resolver()))
+  }
+})
+
+test("esperar a porta livre dá tempo de quem ainda segura o socket", async () => {
+  const porta = 47313
+  const ocupado = createServer()
+  await new Promise<void>((resolver) => ocupado.listen(porta, "127.0.0.1", resolver))
+
+  // o servidor novo só sobe se a porta estiver livre: EADDRINUSE mata ele
+  const inicio = Date.now()
+  const liberada = await esperarPortaLivre(porta, "127.0.0.1", 300)
+  assert.equal(liberada, false, "com o socket preso, a espera precisa terminar sem liberar")
+
+  await new Promise<void>((resolver) => ocupado.close(() => resolver()))
+  assert.equal(await esperarPortaLivre(porta, "127.0.0.1", 1000), true, "soltou a porta: a espera libera")
+  assert.ok(Date.now() - inicio >= 300, "a espera respeita o prazo")
 })

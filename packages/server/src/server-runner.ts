@@ -1,21 +1,42 @@
 import { readFileSync } from "node:fs"
+import { createServer } from "node:net"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { startServer, SERVER_VERSION, type GriverServer } from "./index.js"
-import { encerrarOrfaos, estaVivo, leitorDoSistema } from "./orfaos.js"
-import type { ServerConfig } from "./config.js"
+import { encerrarOrfaos, lerProcesso } from "./orfaos.js"
+import { loadConfig, type ServerConfig } from "./config.js"
 
 /**
- * Espera os servidores encerrarem soltarem a porta.
+ * A porta está livre?
  *
- * O SIGTERM é um pedido: o servidor fecha o banco e devolve a porta. Sem
- * esperar, o servidor novo bate numa porta ainda ocupada.
+ * O pid do servidor morto não diz se a porta já voltou: quem segura o
+ * socket pode ser o filho que sobreviveu ao pai. A pergunta certa é se
+ * ainda tem alguém escutando.
  */
-async function esperarLiberacao(pids: number[], timeoutMs = 3000): Promise<void> {
-  const fim = Date.now() + timeoutMs
-  while (Date.now() < fim) {
-    const vivos = pids.filter((pid) => estaVivo(leitorDoSistema.info(pid)))
-    if (vivos.length === 0) return
+export function portaLivre(porta: number, host: string): Promise<boolean> {
+  return new Promise((resolver) => {
+    const servidor = createServer()
+    servidor.once("error", () => resolver(false))
+    servidor.once("listening", () => servidor.close(() => resolver(true)))
+    servidor.listen(porta, host)
+  })
+}
+
+/**
+ * Espera a porta ficar livre.
+ *
+ * O servidor novo só sobe se a porta estiver livre: occupied é EADDRINUSE,
+ * e o servidor morre na largada.
+ */
+export async function esperarPortaLivre(
+  porta: number,
+  host: string,
+  timeoutMs = 5000,
+): Promise<boolean> {
+  const limite = Date.now() + timeoutMs
+  while (true) {
+    if (await portaLivre(porta, host)) return true
+    if (Date.now() >= limite) return false
     await new Promise((resolver) => setTimeout(resolver, 100))
   }
 }
@@ -28,6 +49,8 @@ async function esperarLiberacao(pids: number[], timeoutMs = 3000): Promise<void>
  */
 export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<GriverServer> {
   const guardiao = guardiaoDaCadeia()
+  const criador = criadorDaSessao()
+  const config = loadConfig(overrides)
 
   // servidor que sobrou de uma execução anterior: o shell que o started
   // morreu e ele ficou de pé, segurando a porta e a memória. Antes de
@@ -35,7 +58,12 @@ export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<
   const orfaos = await encerrarOrfaos()
   if (orfaos.length > 0) {
     console.log(`servidores órfãos encerrados: ${orfaos.map((orfao) => orfao.pid).join(", ")}`)
-    await esperarLiberacao(orfaos.map((orfao) => orfao.pid))
+    // a porta é o que importa: o pid pode ter morrido e o socket continuar
+    // na mão de quem sobrou da cadeia
+    const liberada = await esperarPortaLivre(config.port, config.host)
+    if (!liberada) {
+      console.log(`a porta ${config.port} continua ocupada — o servidor pode não subir`)
+    }
   }
 
   const server = await startServer(overrides)
@@ -59,6 +87,10 @@ export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<
 
   // quem started o servidor vai junto quando ele morre
   vigiaGuardiao(guardiao, () => void shutdown("o processo que started o servidor morreu"))
+
+  // o caso detached: o guardião é a própria cadeia do servidor, então a
+  // vigia de verdade é sobre quem criou a sessão
+  vigiaGuardiao(criador, () => void shutdown("quem started a sessão do servidor morreu"))
 
   return server
 }
@@ -100,6 +132,35 @@ function sessaoDe(pid: number): number | undefined {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Acha quem started a sessão do servidor: o pai do líder da sessão.
+ *
+ * O guardião de sempre não resolve o caso detached: quando o servidor é
+ * detached (`setsid`), o líder da sessão é o `pnpm` da própria cadeia do
+ * servidor. Esse só morre junto com o servidor — a vigia nunca dispara e o
+ * servidor sobrevive a quem o started, segurando a porta e a memória.
+ *
+ * Quem de fato pode morrer antes é quem criou a sessão: o pai do líder. Ele
+ * só conta quando veio de outra sessão, porque foi o `setsid` que separou os
+ * dois. No caso comum — o shell e o servidor na mesma sessão — ninguém se
+ * separou, e a vigia do líder já dá conta.
+ */
+export function criadorDaSessao(): number | undefined {
+  const lider = sessaoDe(process.pid)
+  if (lider === undefined) return undefined
+
+  const processoLider = lerProcesso(lider)
+  if (!processoLider) return undefined
+
+  const criador = lerProcesso(processoLider.ppid)
+  // o init é o ambiente (contêiner, systemd): não há ninguém para vigiar
+  if (!criador || criador.pid <= 1) return undefined
+  // mesma sessão: ninguém se separou do servidor
+  if (criador.sessao === processoLider.sessao) return undefined
+
+  return criador.pid
 }
 
 /**

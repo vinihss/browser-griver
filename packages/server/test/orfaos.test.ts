@@ -17,6 +17,7 @@ function processo(campos: Partial<ProcessoInfo> & { pid: number }): ProcessoInfo
     estado: "S",
     cmdline: "",
     cwd: "",
+    cgroup: "",
     ...campos,
   }
 }
@@ -115,6 +116,50 @@ test("um servidor cujo criador morreu é órfão", () => {
     orfaos.map((p) => p.pid),
     [250],
     "criador morto é órfão mesmo quando o servidor é o líder da sessão",
+  )
+})
+
+test("um servidor do systemd não é órfão", () => {
+  // serviço do systemd: o pai é o init (ppid 1), mas o dono é o systemd,
+  // que o mantém de pé e o traz de volta se ele cair
+  const processos = [
+    processo({
+      pid: 800,
+      ppid: 1,
+      sessao: 800,
+      grupo: 800,
+      cmdline: "node packages/server/src/main.ts",
+      cwd: "/repo/packages/server",
+      cgroup: "0::/user.slice/user-1000.slice/user@1000.service/app.slice/griver-server.service",
+    }),
+  ]
+  const orfaos = servidoresOrfaos(leitorDe(processos))
+  assert.deepEqual(
+    orfaos.map((p) => p.pid),
+    [],
+    "servidor gerenciado pelo systemd não pode ser derrubado por outro servidor",
+  )
+})
+
+test("morar sob o serviço do usuário não faz dele um serviço", () => {
+  // todo processo da sessão do usuário mora abaixo do user@1000.service:
+  // isso não faz dele uma unidade com dono próprio
+  const processos = [
+    processo({
+      pid: 850,
+      ppid: 1,
+      sessao: 850,
+      grupo: 850,
+      cmdline: "node packages/server/src/main.ts",
+      cwd: "/repo/packages/server",
+      cgroup: "0::/user.slice/user-1000.slice/user@1000.service/session-3.scope",
+    }),
+  ]
+  const orfaos = servidoresOrfaos(leitorDe(processos))
+  assert.deepEqual(
+    orfaos.map((p) => p.pid),
+    [850],
+    "servidor de terminal solto continua sendo órfão quando o shell morre",
   )
 })
 
@@ -250,6 +295,77 @@ test("o grupo cai junto com a raiz", async () => {
   )
 
   assert.deepEqual(mortos, [-700], "derrubar a raiz é derrubar o grupo")
+})
+
+/**
+ * A cadeia de um servidor cujo shell morreu.
+ *
+ * O grupo é do shell que já se foi, e o líder da sessão também: o servidor
+ * ficou sozinho. O grupo não pode ser derrubado — ele é do shell, que pode
+ * ter outros filhos vivos —: o que importa é a cadeia.
+ */
+function cadeiaOrfa(): ProcessoInfo[] {
+  return [
+    // o shell que started o servidor: morreu, e o grupo é dele
+    processo({ pid: 800, estado: "Z", cmdline: "zsh -c start-all.sh" }),
+    processo({
+      pid: 801,
+      ppid: 800,
+      grupo: 800,
+      sessao: 799,
+      cmdline: "pnpm exec tsx src/main.ts",
+      cwd: "/repo/packages/server",
+    }),
+    processo({
+      pid: 802,
+      ppid: 801,
+      grupo: 800,
+      sessao: 799,
+      cmdline: "node --require tsx/preflight.cjs src/main.ts",
+      cwd: "/repo/packages/server",
+    }),
+  ]
+}
+
+test("a cadeia inteira é avisada, não só a raiz", async () => {
+  // quem segura a porta é o Node, o último elo: derrubar só a raiz deixa o
+  // socket preso e o servidor novo bate num EADDRINUSE
+  const sinais: { alvo: number; sinal: NodeJS.Signals }[] = []
+  await encerrarOrfaos(
+    leitorDe(cadeiaOrfa()),
+    (alvo, sinal) => {
+      sinais.push({ alvo, sinal })
+    },
+    { esperaParaSigKillMs: 0, vivo: () => false },
+  )
+
+  assert.deepEqual(
+    sinais.map((s) => s.alvo),
+    [801, 802],
+    "a raiz e o filho são avisados: quem segura a porta é o Node",
+  )
+})
+
+test("o filho que ignora o SIGTERM é derrubado", async () => {
+  // a raiz honrou o pedido e saiu; o Node, não: ele fica com a porta
+  const sinais: { alvo: number; sinal: NodeJS.Signals }[] = []
+  await encerrarOrfaos(
+    leitorDe(cadeiaOrfa()),
+    (alvo, sinal) => {
+      sinais.push({ alvo, sinal })
+    },
+    { esperaParaSigKillMs: 0, vivo: (pid) => pid === 802 },
+  )
+
+  assert.deepEqual(
+    sinais,
+    [
+      { alvo: 801, sinal: "SIGTERM" },
+      { alvo: 802, sinal: "SIGTERM" },
+      { alvo: 802, sinal: "SIGKILL" },
+    ],
+    "o pedido primeiro; o SIGKILL só para quem continua de pé",
+  )
 })
 
 test("quem ignora o SIGTERM leva SIGKILL", async () => {

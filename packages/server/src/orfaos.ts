@@ -119,17 +119,27 @@ export function estaVivo(processo: ProcessoInfo | undefined): boolean {
 /**
  * Diz se o processo tem dono no systemd.
  *
- * Um serviço do systemd (`griver-server.service`) roda com o pai no init:
+ * Um serviço do systemd (`griver-mcp.service`) roda com o pai no init:
  * o `ppid` é 1 mesmo com o servidor de pé e bem cuidinho. Sem esta
  * distinção, qualquer servidor novo que sobe — o da suíte de testes, o de
  * um `griver serve` no terminal — derrubaria o servidor de produção, e o
  * systemd o subiria de novo, derrubando a sessão de quem está trabalhando.
  *
- * O que denuncia o serviço é o caminho no cgroup: `/griver-server.service`.
- * Um `scope` do systemd não conta: ele morre junto com o shell que o criou.
+ * O que denuncia o serviço é a última unidade do caminho no cgroup:
+ * `/app.slice/griver-mcp.service`. As unidades acima (o `user@1000.service`
+ * que segura a sessão inteira do usuário) não contam: um servidor ligado
+ * no terminal do usuário também mora abaixo delas, e esse é justamente o
+ * órfão que a limpeza tem de recolher. Um `scope` também não conta: ele
+ * morre junto com o shell que o criou.
  */
 export function temDonoNoServico(processo: ProcessoInfo): boolean {
-  return /\.service(\/|$)/m.test(processo.cgroup)
+  for (const linha of processo.cgroup.split("\n")) {
+    // a linha é "hierarquia:controllers:caminho": o caminho é o que vem depois
+    const caminho = linha.slice(linha.lastIndexOf(":") + 1)
+    const unidade = caminho.slice(caminho.lastIndexOf("/") + 1)
+    if (unidade.endsWith(".service")) return true
+  }
+  return false
 }
 
 /**
@@ -256,8 +266,18 @@ export async function encerrarOrfaos(
 
   // quem ignorou o pedido continua segurando a porta: leva SIGKILL
   for (const plano of planos) {
-    if (!plano.cadeia.some((pid) => vivo(pid))) continue
-    for (const alvo of plano.alvos) matar(alvo, "SIGKILL")
+    // o grupo só é derrubado se alguém da cadeia ainda está de pé
+    const grupoVivo =
+      plano.alvos.some((alvo) => alvo < 0) && plano.cadeia.some((pid) => vivo(pid))
+    for (const alvo of plano.alvos) {
+      if (alvo < 0) {
+        if (grupoVivo) matar(alvo, "SIGKILL")
+        continue
+      }
+      // sinal em pid morto pode acertar outro processo: só mata quem vive
+      if (!vivo(alvo)) continue
+      matar(alvo, "SIGKILL")
+    }
   }
   return orfaos
 }
