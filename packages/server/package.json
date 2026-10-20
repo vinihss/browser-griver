@@ -40,6 +40,10 @@
     "./db/repo": {
       "types": "./dist/db/repo.d.ts",
       "default": "./dist/db/repo.js"
+    },
+    "./orfaos": {
+      "types": "./dist/orfaos.d.ts",
+      "default": "./dist/orfaos.js"
     }
   },
   "scripts": {

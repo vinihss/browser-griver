@@ -48,6 +48,25 @@ const TESTES = [
 const TEMPO_MAXIMO_MS = 180_000
 
 /**
+ * Encerra servidores do Griver que ficaram órfãos.
+ *
+ * Uma execução anterior morta no meio deixa o servidor de pé: ele segura a
+ * porta e a memória sem ninguém para falar com ele. O limpador do CLI
+ * (`griver cleanup`) sabe quais não têm dono — os que têm dono vivo, de
+ * outra execução rodando ao mesmo tempo, ficam intactos.
+ */
+function limparServidores() {
+  try {
+    execSync("pnpm exec tsx packages/cli/src/index.ts cleanup", {
+      cwd: resolve("."),
+      stdio: "ignore",
+    })
+  } catch {
+    // sem limpador, a suíte segue: o servidor órfão só ocupa memória
+  }
+}
+
+/**
  * Fecha os Chromes que sobraram de uma execução anterior.
  *
  * Só mata navegador que ninguém mais está usando: um Chrome cujo processo
@@ -255,6 +274,7 @@ const site = criarSiteTeste()
 
 for (const nome of TESTES) {
   limparChrome()
+  limparServidores()
   await new Promise((r) => setTimeout(r, 500))
 
   const caminho = resolve(`packages/extension/test/${nome}.e2e.mjs`)
@@ -287,6 +307,7 @@ for (const nome of TESTES) {
 }
 
 limparChrome()
+limparServidores()
 
 site.limpar()
 

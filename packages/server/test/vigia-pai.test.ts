@@ -64,11 +64,12 @@ test("a vigia não impede o processo de encerrar", () => {
   clearInterval(timer)
 })
 
-test("o guardião é o ancestral mais alto, não o pai direto", () => {
+test("o guardião é o líder da sessão, e não o pai direto", () => {
   const guardiao = guardiaoDaCadeia()
   // neste processo de teste o guardião existe e não é o próprio processo
   assert.notEqual(guardiao, undefined)
   assert.notEqual(guardiao, process.pid)
+  assert.notEqual(guardiao, process.ppid)
   assert.ok((guardiao ?? 0) > 1, "o guardião tem de ser um processo de verdade")
 })
 

@@ -9,6 +9,7 @@ Uso: griver <comando> [opções]
 Comandos:
   serve                     sobe o servidor local (HTTP + WebSocket) para a extensão
   doctor                    verifica Node, Playwright, Chrome, Firecrawl e OpenCode
+  cleanup                   encerra servidores que ficaram órfãos
   project list              lista os projetos
   project create <nome>     cria um projeto
   project show [id|nome]    mostra um projeto e suas receitas
@@ -61,6 +62,10 @@ async function main(): Promise<number> {
     case "doctor": {
       const { commandDoctor } = await import("./commands/doctor.js")
       return await commandDoctor(rest)
+    }
+    case "cleanup": {
+      const { commandCleanup } = await import("./commands/cleanup.js")
+      return await commandCleanup(rest, json)
     }
     case "project": {
       const { commandProject } = await import("./commands/project.js")

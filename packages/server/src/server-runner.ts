@@ -2,7 +2,23 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { startServer, SERVER_VERSION, type GriverServer } from "./index.js"
+import { encerrarOrfaos, estaVivo, leitorDoSistema } from "./orfaos.js"
 import type { ServerConfig } from "./config.js"
+
+/**
+ * Espera os servidores encerrarem soltarem a porta.
+ *
+ * O SIGTERM é um pedido: o servidor fecha o banco e devolve a porta. Sem
+ * esperar, o servidor novo bate numa porta ainda ocupada.
+ */
+async function esperarLiberacao(pids: number[], timeoutMs = 3000): Promise<void> {
+  const fim = Date.now() + timeoutMs
+  while (Date.now() < fim) {
+    const vivos = pids.filter((pid) => estaVivo(leitorDoSistema.info(pid)))
+    if (vivos.length === 0) return
+    await new Promise((resolver) => setTimeout(resolver, 100))
+  }
+}
 
 /**
  * Sobe o servidor e mantém o processo vivo.
@@ -12,6 +28,16 @@ import type { ServerConfig } from "./config.js"
  */
 export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<GriverServer> {
   const guardiao = guardiaoDaCadeia()
+
+  // servidor que sobrou de uma execução anterior: o shell que o started
+  // morreu e ele ficou de pé, segurando a porta e a memória. Antes de
+  // pegar a porta, ele sai da frente.
+  const orfaos = encerrarOrfaos()
+  if (orfaos.length > 0) {
+    console.log(`servidores órfãos encerrados: ${orfaos.map((orfao) => orfao.pid).join(", ")}`)
+    await esperarLiberacao(orfaos.map((orfao) => orfao.pid))
+  }
+
   const server = await startServer(overrides)
 
   console.log(`griver ${SERVER_VERSION} ouvindo em ${server.url}`)
@@ -38,36 +64,39 @@ export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<
 }
 
 /**
- * Acha quem é o dono da sessão do processo: o líder do seu grupo.
+ * Acha quem é o dono da sessão do processo: o líder da sessão.
  *
  * A cadeia de quem started um servidor tem várias camadas: `pnpm` → `tsx` →
  * o processo do Node. Vigiar o pai direto não resolve — quando o shell
  * morre, essa cadeia inteira continua viva e o pai direto nem percebe.
  *
- * O líder do grupo é quem manda na sessão: normalmente o shell que pediu o
- * servidor. Quando ele morre, o servidor fica sozinho na sessão — órfão,
- * segurando a porta e a memória sem ninguém para falar com ele.
+ * O líder da sessão é quem manda na sessão: normalmente o shell que pediu o
+ * servidor. Quando ele morre, o servidor fica sozinho — órfão, segurando a
+ * porta e a memória sem ninguém para falar com ele.
+ *
+ * É a mesma regra do limpador (`griver cleanup`): um servidor é órfão
+ * quando o líder da sua sessão morreu.
  *
  * Devolve `undefined` quando não há ninguém para vigiar: quem é o próprio
- * líder (o servidor foi detached de propósito) ou quem nasceu sem grupo.
+ * líder (o servidor foi detached de propósito) ou quem nasceu sem sessão.
  */
 export function guardiaoDaCadeia(): number | undefined {
-  const grupo = grupoDe(process.pid)
+  const sessao = sessaoDe(process.pid)
 
-  // sou o líder do meu grupo: ninguém pode derrubar o grupo por aqui
-  if (grupo === undefined || grupo === process.pid) return undefined
+  // sou o líder da minha sessão: ninguém pode me derrubar por aqui
+  if (sessao === undefined || sessao === process.pid) return undefined
 
-  return grupo
+  return sessao
 }
 
-/** Grupo de processos de um pid, lido de `/proc` (Linux). */
-function grupoDe(pid: number): number | undefined {
+/** Sessão (o terminal) de um pid, lida de `/proc` (Linux). */
+function sessaoDe(pid: number): number | undefined {
   try {
     // depois do ')' vem: estado, ppid, pgrp, session
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
     const campos = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)
-    const grupo = Number(campos[2])
-    return Number.isFinite(grupo) ? grupo : undefined
+    const sessao = Number(campos[3])
+    return Number.isFinite(sessao) ? sessao : undefined
   } catch {
     return undefined
   }
