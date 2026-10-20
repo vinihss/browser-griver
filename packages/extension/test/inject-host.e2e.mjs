@@ -11,7 +11,7 @@ import { createServer } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, achaAba, fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 
@@ -41,20 +41,32 @@ const page = await context.newPage()
 await page.goto(`http://[::1]:${port}/`)
 await page.waitForTimeout(800)
 
-const resultado = await worker.evaluate(async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.id) return { erro: "sem aba ativa" }
-  try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] })
-    const r = await chrome.tabs.sendMessage(tab.id, {
-      type: "griver:page",
-      command: { action: "context" },
-    })
-    return { ok: true, titulo: r?.result?.title }
-  } catch (error) {
-    return { ok: false, erro: String(error) }
+// a aba é achada pelo endereço: a aba ativa depende do foco da janela e
+// muda quando outro Chrome aparece na tela
+const aba = await achaAba(worker, `http://[::1]:${port}`)
+if (!aba) {
+  console.log("injeção em página fora de localhost:", JSON.stringify({ erro: "aba do teste não encontrada" }))
+  await context.close()
+  server.close()
+  process.exit(1)
+}
+
+const resultado = await worker.evaluate(async ([tabId]) => {
+  for (let tentativa = 0; ; tentativa++) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] })
+      const r = await chrome.tabs.sendMessage(tabId, {
+        type: "griver:page",
+        command: { action: "context" },
+      })
+      return { ok: true, titulo: r?.result?.title }
+    } catch (error) {
+      // a aba pode estar recarregando: o frame some por um instante
+      if (tentativa >= 2) return { ok: false, erro: String(error) }
+      await new Promise((resolver) => setTimeout(resolver, 500))
+    }
   }
-})
+}, [aba.id])
 
 console.log("injeção em página fora de localhost:", JSON.stringify(resultado))
 

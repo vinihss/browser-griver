@@ -10,6 +10,27 @@ import { resolve } from "node:path"
 export const SERVER_URL = process.env.GRIVER_SERVER_URL ?? "http://127.0.0.1:7331"
 
 /**
+ * Endereço do servidor para um e2e rodando sozinho.
+ *
+ * O padrão da casa (7331) é o servidor de desenvolvimento, com o banco de
+ * verdade: um teste que cria e apaga projetos deixa lixo no banco do
+ * usuário e a lista de receitas enche de "Script do teste". Sem endereço, o
+ * teste não roda — a suíte completa sobe um servidor isolado e passa o
+ * dele; para rodar um teste só, aponte para um servidor descartável.
+ */
+export function servidorDoTeste(argumentos) {
+  const url = argumentos?.[0]
+  if (!url) {
+    throw new Error(
+      "informe o servidor: node packages/extension/test/<teste>.e2e.mjs <serverUrl>\n" +
+        "sem endereço o padrão é o servidor de desenvolvimento (7331), com o banco de verdade — " +
+        "o teste deixaria projetos e receitas de teste no banco do usuário",
+    )
+  }
+  return url
+}
+
+/**
  * Garante que o navegador feche se o teste falhar no meio.
  *
  * Um Chrome órfão continua conectado ao servidor e capturando eventos: os
@@ -111,6 +132,36 @@ export async function conectar(panel, serverUrl = SERVER_URL) {
   })
   await panel.waitForTimeout(400)
   return true
+}
+
+/**
+ * Acha a aba do teste pelo endereço.
+ *
+ * Pegar a aba ativa depende do foco da janela: com outro Chrome na tela, o
+ * foco muda de janela e a injeção cai numa aba que já morreu — o Chrome
+ * responde "Frame with ID 0 was removed" e o teste falha sem ter nada a ver
+ * com o código. A aba do teste é achada pelo endereço, que não muda com o
+ * foco.
+ *
+ * Devolve `null` quando a aba não aparece: aí o teste diz o que faltou em
+ * vez de fingir que a permissão de host falhou.
+ */
+export async function achaAba(worker, url, tentativas = 20) {
+  return await worker.evaluate(
+    async ([alvo, quantas]) => {
+      for (let tentativa = 0; tentativa < quantas; tentativa++) {
+        const abas = await chrome.tabs.query({})
+        const achada = abas.find((aba) => aba.url && aba.url.startsWith(alvo))
+        // a aba existe e a página carregou: dá para injetar
+        if (achada && achada.status === "complete") {
+          return { id: achada.id, url: achada.url }
+        }
+        await new Promise((resolver) => setTimeout(resolver, 250))
+      }
+      return null
+    },
+    [url, tentativas],
+  )
 }
 
 /**

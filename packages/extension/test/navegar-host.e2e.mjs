@@ -7,7 +7,7 @@ import { createServer } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, achaAba, fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 
@@ -37,24 +37,32 @@ const page = await context.newPage()
 await page.goto(`http://[::1]:${port}/`)
 await page.waitForTimeout(600)
 
-const resultado = await worker.evaluate(async ([porta]) => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.id) return { erro: "sem aba" }
+// a aba é achada pelo endereço: a aba ativa depende do foco da janela e
+// muda quando outro Chrome aparece na tela
+const aba = await achaAba(worker, `http://[::1]:${port}`)
+if (!aba) {
+  console.log(JSON.stringify({ indo: ["aba do teste não encontrada"] }, null, 1))
+  await context.close()
+  server.close()
+  process.exit(1)
+}
+
+const resultado = await worker.evaluate(async ([tabId, porta]) => {
   const indo = []
   try {
-    await chrome.tabs.update(tab.id, { url: `http://[::1]:${porta}/destino` })
+    await chrome.tabs.update(tabId, { url: `http://[::1]:${porta}/destino` })
     indo.push("destino ok")
   } catch (error) {
     indo.push(`destino falhou: ${error}`)
   }
   try {
-    await chrome.tabs.update(tab.id, { url: "https://www.example.com/" })
+    await chrome.tabs.update(tabId, { url: "https://www.example.com/" })
     indo.push("https ok")
   } catch (error) {
     indo.push(`https falhou: ${error}`)
   }
   return { indo }
-}, [port])
+}, [aba.id, port])
 
 console.log(JSON.stringify(resultado, null, 1))
 
