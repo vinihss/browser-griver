@@ -27,6 +27,8 @@ export interface ProcessoInfo {
   cmdline: string
   /** diretório de trabalho */
   cwd: string
+  /** caminho no cgroup do sistema (vazio quando não dá para ler) */
+  cgroup: string
 }
 
 /** Leitor de processos — injetável para o teste não depender do sistema. */
@@ -68,7 +70,14 @@ export function lerProcesso(pid: number): ProcessoInfo | undefined {
     // sem permissão ou já morto
   }
 
-  return { pid, ppid, grupo, sessao, estado, cmdline, cwd }
+  let cgroup = ""
+  try {
+    cgroup = readFileSync(`/proc/${pid}/cgroup`, "utf8")
+  } catch {
+    // sem cgroup: fora do systemd, ou o processo já morreu
+  }
+
+  return { pid, ppid, grupo, sessao, estado, cmdline, cwd, cgroup }
 }
 
 /** Leitor de verdade, sobre o `/proc` do sistema. */
@@ -108,6 +117,22 @@ export function estaVivo(processo: ProcessoInfo | undefined): boolean {
 }
 
 /**
+ * Diz se o processo tem dono no systemd.
+ *
+ * Um serviço do systemd (`griver-server.service`) roda com o pai no init:
+ * o `ppid` é 1 mesmo com o servidor de pé e bem cuidinho. Sem esta
+ * distinção, qualquer servidor novo que sobe — o da suíte de testes, o de
+ * um `griver serve` no terminal — derrubaria o servidor de produção, e o
+ * systemd o subiria de novo, derrubando a sessão de quem está trabalhando.
+ *
+ * O que denuncia o serviço é o caminho no cgroup: `/griver-server.service`.
+ * Um `scope` do systemd não conta: ele morre junto com o shell que o criou.
+ */
+export function temDonoNoServico(processo: ProcessoInfo): boolean {
+  return /\.service(\/|$)/m.test(processo.cgroup)
+}
+
+/**
  * Diz se o processo ainda tem dono.
  *
  * O dono é quem o colocou no mundo: o shell que o started. Quando esse
@@ -120,7 +145,7 @@ export function estaVivo(processo: ProcessoInfo | undefined): boolean {
  */
 export function temDonoVivo(processo: ProcessoInfo, leitor: Leitor = leitorDoSistema): boolean {
   // o criador morreu: o init herdou o processo e ele ficou órfão
-  if (processo.ppid === 1) return false
+  if (processo.ppid === 1) return temDonoNoServico(processo)
 
   // eu sou o líder: ninguém pode me derrubar por aqui
   if (processo.sessao === processo.pid) return true
@@ -209,25 +234,72 @@ export async function encerrarOrfaos(
 
   const meus = new Set(minhaCadeia(leitor))
   const orfaos = servidoresOrfaos(leitor).filter((orfao) => !meus.has(orfao.pid))
-  for (const orfao of orfaos) {
-    // sou o líder do grupo: derrubar o grupo derruba a cadeia toda
-    matar(alvoDoOrfao(orfao), "SIGTERM")
-  }
   if (orfaos.length === 0) return orfaos
 
-  // o prazo do bom: quem honrou o pedido já saiu
-  await espera(esperaParaSigKillMs)
+  // a cadeia é montada antes do sinal: depois do SIGTERM os órfãos são
+  // reparentados pelo init e a lista de filhos se perde
+  const planos = orfaos.map((orfao) => {
+    const cadeia = [orfao.pid, ...descendentes(orfao.pid, leitor)]
+    return { orfao, cadeia, alvos: alvosDoOrfao(orfao, cadeia) }
+  })
 
-  for (const orfao of orfaos) {
-    if (!vivo(orfao.pid)) continue
-    matar(alvoDoOrfao(orfao), "SIGKILL")
+  for (const plano of planos) {
+    for (const alvo of plano.alvos) matar(alvo, "SIGTERM")
+  }
+
+  // o prazo do bom: enquanto a cadeia toda sair, não há por que esperar
+  const limite = Date.now() + esperaParaSigKillMs
+  while (Date.now() < limite) {
+    if (planos.every((plano) => !plano.cadeia.some((pid) => vivo(pid)))) return orfaos
+    await espera(50)
+  }
+
+  // quem ignorou o pedido continua segurando a porta: leva SIGKILL
+  for (const plano of planos) {
+    if (!plano.cadeia.some((pid) => vivo(pid))) continue
+    for (const alvo of plano.alvos) matar(alvo, "SIGKILL")
   }
   return orfaos
 }
 
-/** O alvo do sinal: o grupo inteiro quando o órfão lidera o grupo. */
-function alvoDoOrfao(orfao: ProcessoInfo): number {
-  return orfao.grupo === orfao.pid ? -orfao.grupo : orfao.pid
+/**
+ * Os alvos do sinal: a cadeia inteira do órfão.
+ *
+ * A cadeia é `pnpm` → `tsx` → `node`, e quem segura a porta é o último: o
+ * Node. Derrubar só a raiz deixa o Node de pé, com a porta presa — e o
+ * servidor novo bate num EADDRINUSE que não passa.
+ *
+ * Quando o órfão lidera o próprio grupo, o grupo já é a cadeia: um sinal
+ * negativo derruba tudo de uma vez. Quando o grupo é de outra pessoa (o
+ * shell que started o servidor), o grupo não pode ser tocado — aí cada
+ * elo da cadeia é sinalizado pelo seu pid.
+ */
+export function alvosDoOrfao(orfao: ProcessoInfo, cadeia: number[] = []): number[] {
+  if (orfao.grupo === orfao.pid) return [-orfao.grupo]
+  return [orfao.pid, ...cadeia.filter((pid) => pid !== orfao.pid)]
+}
+
+/**
+ * Os processos que descendem de um pid: filhos, netos, bisnetos.
+ *
+ * É a cadeia do servidor: quem herda o pai herda também a porta.
+ */
+export function descendentes(pid: number, leitor: Leitor = leitorDoSistema): number[] {
+  const filhos = new Map<number, number[]>()
+  for (const processo of leitor.listar()) {
+    const lista = filhos.get(processo.ppid) ?? []
+    lista.push(processo.pid)
+    filhos.set(processo.ppid, lista)
+  }
+
+  const achados: number[] = []
+  const fila = [...(filhos.get(pid) ?? [])]
+  while (fila.length > 0) {
+    const atual = fila.shift()!
+    achados.push(atual)
+    fila.push(...(filhos.get(atual) ?? []))
+  }
+  return achados
 }
 
 /** Espera um tempo, em milissegundos. */
