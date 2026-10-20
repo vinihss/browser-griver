@@ -11,95 +11,132 @@ export interface RecordingSnapshot {
   updatedAt: number
 }
 
+/** Sessão usada quando a chamada não informa qual extensão é dona. */
+const SEM_CLIENTE = "default"
+
 /**
- * Guarda a gravação em andamento.
+ * Guarda as gravações em andamento.
  *
- * A extensão envia os eventos capturados; o servidor mantém a lista e a
- * converte em passos de receita quando a gravação é concluída.
+ * Cada extensão tem a sua própria gravação: os eventos capturados por uma
+ * não podem entrar na receita de outra, senão a receita sai com passos que
+ * nunca aconteceram. As chamadas sem `clientId` mexem na gravação corrente —
+ * a última que começou.
  */
 export class RecordingBuffer {
-  private id = ""
-  private projectId: string | undefined
-  private status: RecordingStatus = "idle"
-  private events: RecordedEvent[] = []
-  private startedAt = 0
-  private updatedAt = 0
+  private readonly sessions = new Map<string, RecordingSession>()
+  /** extensão dona da gravação corrente */
+  private corrente = SEM_CLIENTE
 
-  start(projectId?: string): RecordingSnapshot {
-    this.id = stepId("rec")
-    this.projectId = projectId
-    this.status = "recording"
-    this.events = []
-    this.startedAt = Date.now()
-    this.updatedAt = this.startedAt
-    return this.snapshot()
+  start(clientId: string | undefined, projectId?: string): RecordingSnapshot {
+    const dono = clientId ?? SEM_CLIENTE
+    const session: RecordingSession = {
+      id: stepId("rec"),
+      projectId,
+      status: "recording",
+      events: [],
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    this.sessions.set(dono, session)
+    this.corrente = dono
+    return this.snapshot(dono)
   }
 
-  pause(): RecordingSnapshot {
-    if (this.status === "recording") this.status = "paused"
-    this.updatedAt = Date.now()
-    return this.snapshot()
+  pause(clientId?: string): RecordingSnapshot {
+    const session = this.session(clientId)
+    if (session && session.status === "recording") session.status = "paused"
+    if (session) session.updatedAt = Date.now()
+    return this.snapshot(clientId)
   }
 
-  resume(): RecordingSnapshot {
-    if (this.status === "paused") this.status = "recording"
-    this.updatedAt = Date.now()
-    return this.snapshot()
+  resume(clientId?: string): RecordingSnapshot {
+    const session = this.session(clientId)
+    if (session && session.status === "paused") session.status = "recording"
+    if (session) session.updatedAt = Date.now()
+    return this.snapshot(clientId)
   }
 
   /** Eventos gravados enquanto pausado são ignorados. */
-  push(event: RecordedEvent): RecordingSnapshot {
-    if (this.status === "recording") {
-      this.events.push(event)
-      this.updatedAt = Date.now()
+  push(event: RecordedEvent, clientId?: string): RecordingSnapshot {
+    const session = this.sessaoDoEvento(clientId)
+    if (session && session.status === "recording") {
+      session.events.push(event)
+      session.updatedAt = Date.now()
     }
-    return this.snapshot()
+    return this.snapshot(clientId)
   }
 
-  stop(): { snapshot: RecordingSnapshot; recipe: Recipe } {
-    const snapshot = this.snapshot()
-    const recipe = this.toRecipe()
-    this.reset()
+  stop(clientId?: string): { snapshot: RecordingSnapshot; recipe: Recipe } {
+    const dono = this.dono(clientId)
+    const session = this.sessions.get(dono)
+    const snapshot = this.snapshot(clientId)
+    const recipe = this.toRecipe(session?.events ?? [])
+    this.sessions.delete(dono)
+    if (this.corrente === dono) this.corrente = SEM_CLIENTE
     return { snapshot, recipe }
   }
 
-  discard(): RecordingSnapshot {
-    const snapshot = this.snapshot()
-    this.reset()
+  discard(clientId?: string): RecordingSnapshot {
+    const dono = this.dono(clientId)
+    const snapshot = this.snapshot(clientId)
+    this.sessions.delete(dono)
+    if (this.corrente === dono) this.corrente = SEM_CLIENTE
     return snapshot
   }
 
+  /** Apaga todas as gravações. */
   reset(): void {
-    this.id = ""
-    this.projectId = undefined
-    this.status = "idle"
-    this.events = []
-    this.startedAt = 0
-    this.updatedAt = 0
+    this.sessions.clear()
+    this.corrente = SEM_CLIENTE
   }
 
-  snapshot(): RecordingSnapshot {
+  snapshot(clientId?: string): RecordingSnapshot {
+    const session = this.session(clientId)
+    if (!session) {
+      return {
+        id: "",
+        projectId: undefined,
+        status: "idle",
+        events: [],
+        startedAt: 0,
+        updatedAt: 0,
+      }
+    }
     return {
-      id: this.id,
-      projectId: this.projectId,
-      status: this.status,
-      events: [...this.events],
-      startedAt: this.startedAt,
-      updatedAt: this.updatedAt,
+      id: session.id,
+      projectId: session.projectId,
+      status: session.status,
+      events: [...session.events],
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
     }
   }
 
   get isActive(): boolean {
-    return this.status !== "idle"
+    for (const session of this.sessions.values()) {
+      if (session.status !== "idle") return true
+    }
+    return false
+  }
+
+  /** A gravação desta extensão está ativa? */
+  isRecording(clientId: string): boolean {
+    const session = this.sessions.get(clientId)
+    return session ? session.status !== "idle" : false
   }
 
   /**
-   * Converte os eventos capturados em passos de receita.
+   * Esta extensão é a dona da gravação em andamento?
    *
-   * Passos de digitação no mesmo campo com o mesmo valor viram um único
-   * `fill` — `input` e `change` disparam juntos e produziriam duplicatas.
+   * Usado para ignorar comandos de pause/resume/stop que chegam de uma
+   * extensão que não começou a gravação.
    */
-  toRecipe(): Recipe {
+  belongsTo(clientId: string): boolean {
+    return this.isRecording(clientId)
+  }
+
+  /** Converte os eventos capturados em passos de receita. */
+  toRecipe(events: RecordedEvent[]): Recipe {
     const steps: Step[] = []
     /** preenchimentos ainda não emitidos, por campo */
     const pending = new Map<string, { step: Step & { type: "fill" }; value: string }>()
@@ -114,7 +151,7 @@ export class RecordingBuffer {
       pending.clear()
     }
 
-    for (const event of this.events) {
+    for (const event of events) {
       switch (event.kind) {
         case "navigate": {
           flush()
@@ -133,6 +170,7 @@ export class RecordingBuffer {
         }
         case "input":
         case "change": {
+          flush()
           const target = targetFrom(event)
           if (!target) break
           const field = target.selectors[0] ?? ""
@@ -193,6 +231,46 @@ export class RecordingBuffer {
       steps,
     }
   }
+
+  /** Sessão pedida, ou a corrente quando o cliente não é informado. */
+  private session(clientId?: string): RecordingSession | undefined {
+    return this.sessions.get(clientId ?? this.corrente)
+  }
+
+  /**
+   * Sessão que recebe os eventos desta extensão.
+   *
+   * Uma extensão sem gravação própria adota a gravação que não tem dona —
+   * é o que acontece quando a gravação começou pela API HTTP e a extensão
+   * é a primeira a mandar eventos.
+   */
+  private sessaoDoEvento(clientId?: string): RecordingSession | undefined {
+    if (!clientId) return this.session()
+    const propria = this.sessions.get(clientId)
+    if (propria) return propria
+
+    const semDono = this.sessions.get(SEM_CLIENTE)
+    if (!semDono) return undefined
+
+    this.sessions.delete(SEM_CLIENTE)
+    this.sessions.set(clientId, semDono)
+    this.corrente = clientId
+    return semDono
+  }
+
+  /** Chave da sessão pedida, ou da corrente. */
+  private dono(clientId?: string): string {
+    return clientId ?? this.corrente
+  }
+}
+
+interface RecordingSession {
+  id: string
+  projectId: string | undefined
+  status: RecordingStatus
+  events: RecordedEvent[]
+  startedAt: number
+  updatedAt: number
 }
 
 function targetFrom(event: RecordedEvent): TargetRef | undefined {

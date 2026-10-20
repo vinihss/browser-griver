@@ -149,9 +149,15 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         repo.deleteRecipe(message.id)
         wsGateway.broadcast({ type: "recipes.changed" })
         break
+      // ── gravação ──────────────────────────────────────────────────────────
+      //
+      // A gravação pertence à extensão que a começou: só a donatária manda
+      // eventos e recebe o estado. Mandar para todas misturava os passos de
+      // uma aba com os de outra.
+
       case "record.start": {
-        const snapshot = recording.start(message.projectId)
-        wsGateway.broadcast({
+        const snapshot = recording.start(client.id, message.projectId)
+        wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,
           steps: snapshot.events.length,
@@ -160,8 +166,9 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         break
       }
       case "record.pause": {
-        const snapshot = recording.pause()
-        wsGateway.broadcast({
+        if (!recording.belongsTo(client.id)) break
+        const snapshot = recording.pause(client.id)
+        wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,
           steps: snapshot.events.length,
@@ -170,8 +177,9 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         break
       }
       case "record.resume": {
-        const snapshot = recording.resume()
-        wsGateway.broadcast({
+        if (!recording.belongsTo(client.id)) break
+        const snapshot = recording.resume(client.id)
+        wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,
           steps: snapshot.events.length,
@@ -180,8 +188,9 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         break
       }
       case "record.discard": {
-        const snapshot = recording.discard()
-        wsGateway.broadcast({
+        if (!recording.belongsTo(client.id)) break
+        const snapshot = recording.discard(client.id)
+        wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,
           steps: 0,
@@ -190,15 +199,16 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         break
       }
       case "record.stop": {
-        const { snapshot, recipe } = recording.stop()
-        wsGateway.broadcast({
+        if (!recording.belongsTo(client.id)) break
+        const { snapshot, recipe } = recording.stop(client.id)
+        wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,
           steps: 0,
           projectId: snapshot.projectId,
         })
         // a receita precisa vir junto: o painel usa esses passos ao salvar
-        wsGateway.broadcast({
+        wsGateway.send(client, {
           type: "record.finished",
           stepCount: recipe.steps.length,
           recipe,
@@ -206,9 +216,10 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         break
       }
       case "record.event": {
-        const snapshot = recording.push(message.event)
-        wsGateway.broadcast({ type: "record.step", event: message.event })
-        wsGateway.broadcast({
+        const snapshot = recording.push(message.event, client.id)
+        if (!recording.belongsTo(client.id)) break
+        wsGateway.send(client, { type: "record.step", event: message.event })
+        wsGateway.send(client, {
           type: "record.state",
           state: snapshot.status,
           steps: snapshot.events.length,

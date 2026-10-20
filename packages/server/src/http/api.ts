@@ -289,7 +289,8 @@ export function registerApi(router: Router, ctx: ApiContext): Router {
 
   router.post("/api/recording/start", async (request) => {
     const body = (await request.body()) as { projectId?: string } | undefined
-    return recording.start(body?.projectId)
+    // sem dona: a primeira extensão que mandar evento assume a gravação
+    return recording.start(undefined, body?.projectId)
   })
 
   router.post("/api/recording/pause", () => recording.pause())

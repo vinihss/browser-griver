@@ -5,11 +5,11 @@ import { matches, parseCron } from "../src/scheduler.js"
 
 test("converte eventos em passos de receita", () => {
   const buffer = new RecordingBuffer()
-  buffer.start("p1")
-  buffer.push({ kind: "navigate", url: "https://exemplo.com/login", ts: 1 })
-  buffer.push({ kind: "input", selectors: ["#nome"], value: "Ana", ts: 2 })
-  buffer.push({ kind: "click", selectors: ["#entrar"], ts: 3 })
-  buffer.push({ kind: "select", selectors: ["#plano"], value: "pro", ts: 4 })
+  buffer.start("ext-1", "p1")
+  buffer.push({ kind: "navigate", url: "https://exemplo.com/login", ts: 1 }, "ext-1")
+  buffer.push({ kind: "input", selectors: ["#nome"], value: "Ana", ts: 2 }, "ext-1")
+  buffer.push({ kind: "click", selectors: ["#entrar"], ts: 3 }, "ext-1")
+  buffer.push({ kind: "select", selectors: ["#plano"], value: "pro", ts: 4 }, "ext-1")
 
   const { recipe } = buffer.stop()
   assert.equal(recipe.steps.length, 4)
@@ -23,11 +23,11 @@ test("converte eventos em passos de receita", () => {
 
 test("input e change do mesmo campo viram um único passo", () => {
   const buffer = new RecordingBuffer()
-  buffer.start("p1")
-  buffer.push({ kind: "navigate", url: "https://exemplo.com", ts: 1 })
-  buffer.push({ kind: "input", selectors: ["#nome"], value: "Ana", ts: 2 })
-  buffer.push({ kind: "change", selectors: ["#nome"], value: "Ana", ts: 3 })
-  buffer.push({ kind: "click", selectors: ["#ok"], ts: 4 })
+  buffer.start("ext-1", "p1")
+  buffer.push({ kind: "navigate", url: "https://exemplo.com", ts: 1 }, "ext-1")
+  buffer.push({ kind: "input", selectors: ["#nome"], value: "Ana", ts: 2 }, "ext-1")
+  buffer.push({ kind: "change", selectors: ["#nome"], value: "Ana", ts: 3 }, "ext-1")
+  buffer.push({ kind: "click", selectors: ["#ok"], ts: 4 }, "ext-1")
 
   const { recipe } = buffer.stop()
   const fills = recipe.steps.filter((step) => step.type === "fill")
@@ -36,12 +36,12 @@ test("input e change do mesmo campo viram um único passo", () => {
 
 test("pausa ignora eventos", () => {
   const buffer = new RecordingBuffer()
-  buffer.start("p1")
-  buffer.push({ kind: "click", selectors: ["#a"], ts: 1 })
+  buffer.start("ext-1", "p1")
+  buffer.push({ kind: "click", selectors: ["#a"], ts: 1 }, "ext-1")
   buffer.pause()
-  buffer.push({ kind: "click", selectors: ["#b"], ts: 2 })
+  buffer.push({ kind: "click", selectors: ["#b"], ts: 2 }, "ext-1")
   buffer.resume()
-  buffer.push({ kind: "click", selectors: ["#c"], ts: 3 })
+  buffer.push({ kind: "click", selectors: ["#c"], ts: 3 }, "ext-1")
 
   const { recipe } = buffer.stop()
   assert.equal(recipe.steps.length, 2)
@@ -51,8 +51,8 @@ test("pausa ignora eventos", () => {
 
 test("descartar apaga a gravação", () => {
   const buffer = new RecordingBuffer()
-  buffer.start("p1")
-  buffer.push({ kind: "click", selectors: ["#a"], ts: 1 })
+  buffer.start("ext-1", "p1")
+  buffer.push({ kind: "click", selectors: ["#a"], ts: 1 }, "ext-1")
   buffer.discard()
   assert.equal(buffer.isActive, false)
   assert.equal(buffer.snapshot().events.length, 0)
