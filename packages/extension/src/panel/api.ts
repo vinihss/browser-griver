@@ -1,7 +1,27 @@
 import type { ProjectSummary, Recipe, RecipeSummary, TargetKind } from "@griver/core"
 import { state } from "./state.js"
 
+/**
+ * Garante que o painel tenha um token antes de chamar a API.
+ *
+ * O token é lido do servidor pelo service worker. Até ele responder, o
+ * painel pode disparar uma chamada — por exemplo quando a extensão avisa
+ * que ficou online — e tomar um 401 sem motivo aparente.
+ */
+async function garantirToken(): Promise<void> {
+  if (state.token) return
+  try {
+    const response = (await chrome.runtime.sendMessage({ type: "panel:status" })) as {
+      token?: string
+    }
+    if (response?.token) state.token = response.token
+  } catch {
+    // o service worker ainda não respondeu
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  await garantirToken()
   const response = await fetch(`${state.serverUrl.replace(/\/$/, "")}${path}`, {
     ...init,
     headers: {

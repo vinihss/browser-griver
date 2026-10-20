@@ -109,15 +109,23 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
       void (async () => {
         const url = String(message.url ?? "")
         const token = String(message.token ?? "")
-        // o painel pode não ter token nenhum (ele é lido do servidor): não
-        // sobrescreve o token guardado com string vazia, senão a reconexão
-        // manda `hello` sem token e o servidor responde "token inválido"
-        const update: Record<string, string> = { [STORAGE.serverUrl]: url }
-        if (token) update[STORAGE.token] = token
-        await chrome.storage.local.set(update)
+        // o endereço vem primeiro: o token é do servidor, então o guardado
+        // deixa de valer assim que o endereço muda
+        await chrome.storage.local.set({ [STORAGE.serverUrl]: url, [STORAGE.token]: "" })
         await ensureToken()
+        // o token digitado no painel só entra se o servidor não entregou o
+        // dele — um token de outro servidor não autentica neste
+        const guardado = await chrome.storage.local.get([STORAGE.token])
+        if (!guardado[STORAGE.token] && token) {
+          await chrome.storage.local.set({ [STORAGE.token]: token })
+        }
         await connect()
-        sendResponse({ ok: true, status: state.status })
+        const atual = await chrome.storage.local.get([STORAGE.token])
+        sendResponse({
+          ok: true,
+          status: state.status,
+          token: (atual[STORAGE.token] as string) || "",
+        })
       })()
       return true
 

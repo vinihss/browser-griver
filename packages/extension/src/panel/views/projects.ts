@@ -40,7 +40,10 @@ export function settingsView(): HTMLElement {
             type: "panel:connect",
             url: state.serverUrl,
             token: state.token,
-          })) as { ok: boolean; status?: string }
+          })) as { ok: boolean; status?: string; token?: string }
+          // o token é do servidor conectado: trocar de servidor invalida o
+          // que estava em memória, e as chamadas seguintes levariam 401
+          if (response.token) patch({ token: response.token })
           patch({ status: (response.status ?? "connecting") as never })
           setNotice("Conectando…")
           if (response.status === "online") await refreshProjects()
