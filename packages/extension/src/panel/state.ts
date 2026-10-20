@@ -3,12 +3,11 @@ import type {
   ProjectSummary,
   Recipe,
   RecipeSummary,
-  RecordedEvent,
   RunSummary,
 } from "@griver/core"
 import type { ConnectionStatus } from "../background/ws-client.js"
 
-export type TabId = "projetos" | "receitas" | "gravador" | "chat" | "ajustes"
+export type TabId = "receitas" | "chat" | "ajustes"
 
 export interface PermissionRequest {
   requestId: string
@@ -37,9 +36,6 @@ export interface AppState {
   recipeTarget: "browser" | "os"
   recipeIssues: { path: string; message: string; severity: string }[]
   recording: { active: boolean; paused: boolean; steps: number }
-  recordingEvents: RecordedEvent[]
-  /** receita gerada pela última gravação — é o que o painel salva */
-  recordedRecipe: Recipe | undefined
   chatSessionId: string
   chatMessages: ChatMessagePayload[]
   chatTools: ToolCall[]
@@ -51,13 +47,24 @@ export interface AppState {
   runEvents: { path: string; type: string; status: string; error?: string }[]
   notice: { text: string; kind: "info" | "error" } | undefined
   busy: boolean
+  /** modal "Add New Script" aberto */
+  showAddScript: boolean
+  /** URL pré-preenchida no modal (vinda da gravação) */
+  addScriptUrl: string
+  /**
+   * Receita sendo editada sem estar salva no servidor.
+   *
+   * É o que a gravação produz: o `✎` do overlay abre este rascunho no editor
+   * para o usuário ajustar antes de salvar.
+   */
+  draftRecipe: Recipe | undefined
 }
 
 export const state: AppState = {
   status: "offline",
   serverUrl: "http://127.0.0.1:7331",
   token: "",
-  tab: "projetos",
+  tab: "receitas",
   projects: [],
   recipes: [],
   selectedProjectId: "",
@@ -67,8 +74,6 @@ export const state: AppState = {
   recipeTarget: "browser",
   recipeIssues: [],
   recording: { active: false, paused: false, steps: 0 },
-  recordingEvents: [],
-  recordedRecipe: undefined,
   chatSessionId: "",
   chatMessages: [],
   chatTools: [],
@@ -79,6 +84,9 @@ export const state: AppState = {
   runEvents: [],
   notice: undefined,
   busy: false,
+  showAddScript: false,
+  addScriptUrl: "",
+  draftRecipe: undefined,
 }
 
 type Listener = () => void

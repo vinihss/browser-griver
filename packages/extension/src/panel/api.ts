@@ -23,6 +23,29 @@ export async function loadProjects(): Promise<ProjectSummary[]> {
   return result.projects
 }
 
+const DEFAULT_PROJECT_NAME = "Meus scripts"
+
+/**
+ * Projeto usado quando não há um selecionado.
+ *
+ * O servidor exige `projectId` ao criar uma receita; como o painel lista
+ * todas as receitas sem filtro, basta um projeto padrão — criado uma vez e
+ * guardado na extensão.
+ */
+export async function ensureDefaultProject(): Promise<string> {
+  const projects = await loadProjects()
+
+  // o projeto guardado pode ter sido removido — aí vale o primeiro da lista
+  const stored = await chrome.storage.local.get("griver.defaultProjectId")
+  const saved = stored["griver.defaultProjectId"] as string | undefined
+  if (saved && projects.some((project) => project.id === saved)) return saved
+
+  const existing = projects.find((project) => project.name === DEFAULT_PROJECT_NAME)
+  const project = existing ?? (await createProject(DEFAULT_PROJECT_NAME))
+  await chrome.storage.local.set({ "griver.defaultProjectId": project.id })
+  return project.id
+}
+
 export async function createProject(name: string, description?: string): Promise<ProjectSummary> {
   const result = await request<{ project: ProjectSummary }>("/api/projects", {
     method: "POST",

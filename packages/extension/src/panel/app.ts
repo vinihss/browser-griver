@@ -1,19 +1,11 @@
-import { h, button, clear } from "./dom.js"
+import { h, clear } from "./dom.js"
 import { state, patch, subscribe, setNotice, type TabId } from "./state.js"
 import { loadRecipes } from "./api.js"
-import { projectsView, refreshProjects, settingsView } from "./views/projects.js"
+import { refreshProjects, settingsView } from "./views/projects.js"
 import { recipesView } from "./views/recipes.js"
-import { recorderView } from "./views/recorder.js"
 import { chatView } from "./views/chat.js"
 import { sendToServer } from "./messaging.js"
-import type { RecordedEvent, ServerMessage } from "@griver/core"
-
-const TABS: { id: TabId; label: string }[] = [
-  { id: "projetos", label: "Projetos" },
-  { id: "gravador", label: "Gravar" },
-  { id: "chat", label: "Chat" },
-  { id: "ajustes", label: "Ajustes" },
-]
+import type { Recipe, ServerMessage } from "@griver/core"
 
 let root: HTMLElement
 
@@ -21,6 +13,17 @@ export function mount(container: HTMLElement): void {
   root = container
   subscribe(render)
   chrome.runtime.onMessage.addListener(onRuntimeMessage)
+  // o painel se anuncia ao service worker: `chrome.runtime.sendMessage` do
+  // worker não alcança outras páginas de extensão, então o caminho do
+  // rascunho da gravação passa por esta conexão
+  try {
+    const port = chrome.runtime.connect({ name: "griver:panel" })
+    port.onMessage.addListener((message) => {
+      onRuntimeMessage(message as Record<string, unknown>)
+    })
+  } catch {
+    // o service worker pode estar dormindo: a conexão abre sozinha depois
+  }
   render()
 }
 
@@ -30,18 +33,11 @@ function render(): void {
   const scrollTop = root.querySelector(".chat-messages")?.scrollTop ?? 0
   clear(root)
 
-  root.appendChild(header())
-
-  root.appendChild(tabBar())
+  root.appendChild(panelHeader())
 
   const body = h("div", { class: "body" })
-  // Mostra receitas quando um projeto está selecionado (não usa aba 'receitas' na tabBar)
-  if (state.selectedProjectId) {
+  if (state.tab === "receitas") {
     body.appendChild(recipesView())
-  } else if (state.tab === "projetos") {
-    body.appendChild(projectsView())
-  } else if (state.tab === "gravador") {
-    body.appendChild(recorderView())
   } else if (state.tab === "chat") {
     body.appendChild(chatView())
   } else if (state.tab === "ajustes") {
@@ -59,7 +55,13 @@ function render(): void {
   if (messages) messages.scrollTop = scrollTop
 }
 
-function header(): HTMLElement {
+/**
+ * Cabeçalho do painel.
+ *
+ * À esquerda o `+` (novo script), à direita o estado da conexão e o toggle
+ * entre Receitas e Chat.
+ */
+function panelHeader(): HTMLElement {
   const statusLabel =
     state.status === "online"
       ? "conectado"
@@ -69,40 +71,70 @@ function header(): HTMLElement {
 
   return h(
     "header",
-    { class: "header" },
+    { class: "panel-header" },
     h(
-      "div",
-      { class: "brand" },
-      h("span", { class: "brand-mark" }, "◆"),
-      h("span", { class: "brand-name" }, "Griver"),
+      "button",
+      {
+        class: "icon-btn",
+        title: "Add New Script",
+        "aria-label": "Add New Script",
+        onclick: () => patch({ showAddScript: true, addScriptUrl: "" }),
+      },
+      "+",
     ),
     h(
       "div",
-      { class: `status status-${state.status}` },
-      h("span", { class: "dot" }),
-      statusLabel,
+      { class: "panel-header-actions" },
+      h(
+        "button",
+        {
+          class: `icon-btn${state.tab === "receitas" ? " active" : ""}`,
+          title: "Receitas",
+          "aria-label": "Receitas",
+          onclick: () => void goTo("receitas"),
+        },
+        "☰",
+      ),
+      h(
+        "button",
+        {
+          class: `icon-btn${state.tab === "chat" ? " active" : ""}`,
+          title: "Chat",
+          "aria-label": "Chat",
+          onclick: () => void goTo("chat"),
+        },
+        "✦",
+      ),
+      h(
+        "button",
+        {
+          class: "icon-btn",
+          title: "Ajustes",
+          "aria-label": "Ajustes",
+          onclick: () => void goTo("ajustes"),
+        },
+        "⚙",
+      ),
+      h(
+        "div",
+        { class: `status status-${state.status}`, title: statusLabel },
+        h("span", { class: "dot" }),
+        "Connection",
+      ),
     ),
   )
 }
 
-function tabBar(): HTMLElement {
-  const bar = h("nav", { class: "tabs" })
-  for (const tab of TABS) {
-    bar.appendChild(
-      h(
-        "button",
-        {
-          class: `tab${state.tab === tab.id ? " active" : ""}`,
-          onclick: () => {
-            patch({ tab: tab.id })
-            if (tab.id === "projetos") void refreshProjects()
-          },
-        },
-        tab.label,
-      ),
-    )
+/** Troca de tela recarregando o que a tela precisa. */
+async function goTo(tab: TabId): Promise<void> {
+  patch({ tab })
+  if (tab === "receitas") {
+    try {
+      patch({ recipes: await loadRecipes() })
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error), "error")
+    }
   }
-  return bar
 }
 
 // ── mensagens do service worker ─────────────────────────────────────────────
@@ -137,8 +169,33 @@ function onRuntimeMessage(message: Record<string, unknown>): void {
     })
     return
   }
-}
 
+  // o overlay pediu para abrir a receita gravada no editor do painel
+  if (message.type === "panel:openEditor") {
+    const recipe = message.recipe as Recipe | undefined
+    if (!recipe) return
+    patch({
+      tab: "receitas",
+      selectedRecipeId: "",
+      draftRecipe: recipe,
+      recipeText: JSON.stringify(recipe, null, 2),
+      recipeDirty: true,
+      recipeIssues: [],
+    })
+    return
+  }
+
+  // o overlay pediu para salvar: abre o modal já com a URL da gravação
+  if (message.type === "panel:openAddScript") {
+    const url = String(message.url ?? "")
+    patch({
+      tab: "receitas",
+      showAddScript: true,
+      addScriptUrl: url,
+    })
+    return
+  }
+}
 function handleServerMessage(message: ServerMessage): void {
   switch (message.type) {
     case "projects":
@@ -151,7 +208,7 @@ function handleServerMessage(message: ServerMessage): void {
       void refreshProjects()
       return
     case "recipes.changed":
-      void loadRecipes(state.selectedProjectId || undefined).then((recipes) => patch({ recipes }))
+      void loadRecipes().then((recipes) => patch({ recipes }))
       return
     case "record.state":
       patch({
@@ -163,9 +220,7 @@ function handleServerMessage(message: ServerMessage): void {
       })
       return
     case "record.step":
-      patch({
-        recordingEvents: [...state.recordingEvents, message.event as RecordedEvent].slice(-200),
-      })
+      // a lista de passos vive no overlay, dentro da página
       return
     case "chat.sessions": {
       const current = message.sessions[0]
@@ -228,11 +283,7 @@ function handleServerMessage(message: ServerMessage): void {
       })
       return
     case "record.finished": {
-      // guarda a receita gerada para o botão "Salvar como receita"
-      patch({
-        recordedRecipe: message.recipe,
-        recordingEvents: [],
-      })
+      // a receita pronta fica no overlay; o painel só avisa
       setNotice(
         message.recipe?.steps.length
           ? `Gravação concluída: ${message.recipe.steps.length} passos prontos para salvar.`
@@ -242,7 +293,7 @@ function handleServerMessage(message: ServerMessage): void {
       return
     }
     case "run.started": {
-      patch({ runEvents: [], tab: "receitas" })
+      patch({ runEvents: [] })
       setNotice(`Execução iniciada: ${message.run.recipeName ?? message.run.id}`)
       return
     }
@@ -258,5 +309,3 @@ function handleServerMessage(message: ServerMessage): void {
       return
   }
 }
-
-export { button }
