@@ -150,6 +150,9 @@ aba e executa ações no browser **mediante sua aprovação**.
 
 **Ajustes** — endereço do servidor e token.
 
+O mapa das telas, a estrutura do código da extensão e o troubleshooting
+dela estão em [docs/EXTENSAO.md](./docs/EXTENSAO.md).
+
 ## O formato da receita
 
 Uma receita é um JSON com um formato único, executado em dois alvos:
@@ -236,7 +239,7 @@ O servidor fala três protocolos: **REST** (JSON em `http://127.0.0.1:7331`),
 **WebSocket** (`/ws`, o canal da extensão) e **MCP** (stdio, o canal do
 assistente). A referência completa — cada endpoint, o handshake do
 WebSocket, as ferramentas do MCP e os exemplos de `curl` — está em
-[API.md](./API.md).
+[docs/API.md](./docs/API.md).
 
 ## CLI
 
@@ -410,7 +413,8 @@ packages/cli         binário `griver`
 packages/extension   extensão MV3 (esbuild + TypeScript, sem framework)
 scripts/tasks.mjs    o ponto único das tarefas (install, build, test, e2e…)
 bin/griver           a entrada do repositório: tarefa ou CLI
-.opencode/agents/griver.md  agente do assistente
+docs/                a API, a arquitetura e a extensão
+.opencode/agents/    o agente do assistente e o de desenvolvimento
 ```
 
 A camada de operações (`packages/server/src/ops.ts`) é o meio-termo: o MCP
@@ -419,6 +423,9 @@ mesmas funções, então o comportamento é o mesmo nos dois canais.
 
 O `@griver/core` não importa nada do Node: a extensão e o servidor usam o
 **mesmo** schema, o **mesmo** interpretador e o **mesmo** protocolo.
+
+A arquitetura em detalhe — as camadas, as invariantes e as decisões que já
+custaram tempo — está em [docs/ARQUITETURA.md](./docs/ARQUITETURA.md).
 
 ## Como a execução funciona
 
@@ -469,6 +476,9 @@ conferindo que os passos chegaram ao servidor e que a página terminou no estado
 esperado. Ele apaga o projeto que criou ao final.
 
 ## Problemas comuns
+
+Os problemas da extensão têm um guia próprio, com o mapa das telas e os
+erros mais comuns: [docs/EXTENSAO.md](./docs/EXTENSAO.md#troubleshooting).
 
 **"token inválido"** — a extensão busca o token sozinha ao conectar. Se a
 mensagem aparecer, clique em *Conectar* na aba **Ajustes**: o token guardado

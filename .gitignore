@@ -1,7 +1,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
-data/
+# a pasta de dados é do servidor (banco, token, artefatos); o `.gitkeep`
+# mantém a pasta na árvore — o padrão `data/` inteiro não deixa o
+# git descer na pasta, e aí a exceção não valeria
+data/*
 !data/.gitkeep
 packages/extension/dist/
 packages/extension/src/manifest.json.bak

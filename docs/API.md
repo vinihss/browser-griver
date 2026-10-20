@@ -18,7 +18,7 @@ a extensão, comandada pelo servidor. Por isso `page` e `record` só funcionam
 com o servidor no ar **e** a extensão carregada no Chrome.
 
 O formato da receita (o JSON que entra e sai dos endpoints de receita) está
-no [README](./README.md#o-formato-da-receita).
+no [README](../README.md#o-formato-da-receita).
 
 ### Como subir cada canal
 
