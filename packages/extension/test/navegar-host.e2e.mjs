@@ -7,6 +7,7 @@ import { createServer } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = resolve("packages/extension/dist")
 
@@ -24,6 +25,8 @@ const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir()
     "--no-first-run",
   ],
 })
+
+fecharAoFalhar(context)
 
 let worker = context.serviceWorkers()[0]
 if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })

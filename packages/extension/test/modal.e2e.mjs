@@ -10,6 +10,7 @@ import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = resolve("packages/extension/dist")
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -32,6 +33,8 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     "--no-default-browser-check",
   ],
 })
+
+fecharAoFalhar(context)
 
 const erros = []
 let worker = context.serviceWorkers()[0]
@@ -66,7 +69,20 @@ await panel.evaluate(() => {
     .find((b) => b.textContent?.trim() === "Conectar")
     ?.click()
 })
-await panel.waitForTimeout(1500)
+
+// espera a conexão ficar online antes de usar a API
+let online = false
+for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
+  await panel.waitForTimeout(500)
+  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
+}
+console.log("1. conectado:", online ? "sim" : "NÃO")
+
+// volta para Receitas, que é a tela inicial
+await panel.evaluate(() => {
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
+})
+await panel.waitForTimeout(400)
 
 const token = await panel.evaluate(async () => {
   const guardado = await chrome.storage.local.get("griver.token")
@@ -102,44 +118,51 @@ for (let tentativa = 0; tentativa < 5 && !modal.ok; tentativa++) {
 console.log("2. modal aberto:", modal.ok ? "sim" : "NÃO", modal.campos?.join(", ") ?? "")
 
 // ── preencher e salvar ──────────────────────────────────────────────────────
+// o modal é recriado a cada redesenho do painel: preenche e confere que os
+// valores sobreviveram, senão o clique no Save acha outro elemento
 const nome = `Script do teste ${Date.now()}`
-await panel.evaluate((nome) => {
+const preencheu = await panel.evaluate((nome) => {
   const el = document.querySelector(".modal")
-  const campos = el?.querySelectorAll("input") ?? []
+  if (!el) return false
+  const campos = el.querySelectorAll("input")
   const nameInput = campos[0]
   const urlInput = campos[1]
-  if (nameInput) {
-    nameInput.value = nome
-    nameInput.dispatchEvent(new Event("input", { bubbles: true }))
-  }
-  if (urlInput) {
-    urlInput.value = "https://exemplo.com/pagina"
-    urlInput.dispatchEvent(new Event("input", { bubbles: true }))
-  }
+  if (!nameInput || !urlInput) return false
+  nameInput.value = nome
+  nameInput.dispatchEvent(new Event("input", { bubbles: true }))
+  urlInput.value = "https://exemplo.com/pagina"
+  urlInput.dispatchEvent(new Event("input", { bubbles: true }))
+  return true
 }, nome)
-await panel.waitForTimeout(200)
+console.log("3. campos preenchidos:", preencheu ? "sim" : "NÃO")
+await panel.waitForTimeout(400)
 
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".modal button"))
-    .find((b) => b.textContent?.trim() === "Save")
-    ?.click()
+// o clique precisa acertar o modal atual
+const salvou = await panel.evaluate(() => {
+  const botao = Array.from(document.querySelectorAll(".modal button")).find(
+    (b) => b.textContent?.trim() === "Save",
+  )
+  if (!botao) return false
+  botao.click()
+  return true
 })
+console.log("4. botão Save acionado:", salvou ? "sim" : "NÃO")
 await panel.waitForTimeout(1500)
 
 const aviso = await panel.evaluate(
   () => document.querySelector(".notice")?.textContent?.trim() ?? "",
 )
-console.log("3. aviso ao salvar:", aviso || "(nenhum)")
+console.log("5. aviso ao salvar:", aviso || "(nenhum)")
 
 // ── a receita chegou ao servidor com o startUrl? ────────────────────────────
-const checada = await panel.evaluate(async ([tk, alvo]) => {
-  const r = await fetch("http://127.0.0.1:7331/api/recipes", {
+const checada = await panel.evaluate(async ([tk, alvo, base]) => {
+  const r = await fetch(`${base}/api/recipes`, {
     headers: { "X-Griver-Token": tk },
   })
   const body = await r.json()
   const found = (body.recipes ?? []).find((x) => x.name === alvo)
   if (!found) return { ok: false, motivo: "receita não está no servidor" }
-  const detalhe = await fetch(`http://127.0.0.1:7331/api/recipes/${found.id}`, {
+  const detalhe = await fetch(`${base}/api/recipes/${found.id}`, {
     headers: { "X-Griver-Token": tk },
   })
   const full = await detalhe.json()
@@ -149,12 +172,11 @@ const checada = await panel.evaluate(async ([tk, alvo]) => {
     passos: full.body?.steps?.length ?? -1,
     id: found.id,
   }
-}, [token, nome])
+}, [token, nome, serverUrl])
 
 console.log("4. receita no servidor:", checada.ok ? "sim" : `NÃO (${checada.motivo})`)
 console.log("5. startUrl:", checada.startUrl)
 console.log("6. passos:", checada.passos)
-
 // ── a lista do painel mostra a receita nova? ────────────────────────────────
 const naLista = await panel.evaluate(
   (alvo) =>
@@ -168,13 +190,13 @@ console.log("7. aparece na lista do painel:", naLista ? "sim" : "NÃO")
 // ── limpeza ─────────────────────────────────────────────────────────────────
 if (checada.ok) {
   await panel.evaluate(
-    async ([tk, id]) => {
-      await fetch(`http://127.0.0.1:7331/api/recipes/${id}`, {
+    async ([tk, id, base]) => {
+      await fetch(`${base}/api/recipes/${id}`, {
         method: "DELETE",
         headers: { "X-Griver-Token": tk },
       })
     },
-    [token, checada.id],
+    [token, checada.id, serverUrl],
   )
 }
 

@@ -11,6 +11,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = resolve("packages/extension/dist")
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -28,6 +29,8 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     "--no-default-browser-check",
   ],
 })
+
+fecharAoFalhar(context)
 
 let worker = context.serviceWorkers()[0]
 if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })
@@ -52,7 +55,14 @@ await panel.evaluate(() => {
     .find((b) => b.textContent?.trim() === "Conectar")
     ?.click()
 })
-await panel.waitForTimeout(1500)
+
+// espera a conexão ficar online antes de gravar
+let online = false
+for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
+  await panel.waitForTimeout(500)
+  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
+}
+console.log("1. conectado:", online ? "sim" : "NÃO")
 
 // volta para Receitas, onde fica o botão de gravar
 await panel.evaluate(() => {
@@ -77,19 +87,19 @@ const token = await panel.evaluate(async () => {
 })
 
 // ── 2. criar projeto e registrar o id para limpar no final ─────────────────
-const projeto = await panel.evaluate(async ([tk]) => {
-  const r = await fetch("http://127.0.0.1:7331/api/projects", {
+const projeto = await panel.evaluate(async ([tk, base]) => {
+  const r = await fetch(`${base}/api/projects`, {
     headers: { "X-Griver-Token": tk },
   })
   const body = await r.json()
-  const criado = await fetch("http://127.0.0.1:7331/api/projects", {
+  const criado = await fetch(`${base}/api/projects`, {
     method: "POST",
     headers: { "X-Griver-Token": tk, "Content-Type": "application/json" },
     body: JSON.stringify({ name: "Projeto do teste" }),
   })
   const novo = await criado.json()
   return { id: novo.project?.id ?? "", total: body.projects?.length ?? 0 }
-}, [token])
+}, [token, serverUrl])
 console.log("3. projeto criado:", projeto.id ? "sim" : "não")
 
 // ── 3. página alvo e gravação ──────────────────────────────────────────────
@@ -193,13 +203,13 @@ const avisoFinal = await panel.evaluate(() => document.querySelector(".notice")?
 console.log("10. aviso final:", avisoFinal)
 
 // ── 7. conferência no servidor ─────────────────────────────────────────────
-const receitas = await panel.evaluate(async ([tk]) => {
-  const r = await fetch("http://127.0.0.1:7331/api/recipes", {
+const receitas = await panel.evaluate(async ([tk, base]) => {
+  const r = await fetch(`${base}/api/recipes`, {
     headers: { "X-Griver-Token": tk },
   })
   const body = await r.json()
   return body.recipes ?? []
-}, [token])
+}, [token, serverUrl])
 
 console.log("\nreceitas no servidor:")
 for (const receita of receitas) {
@@ -214,14 +224,14 @@ if (!gravada) {
 }
 
 const detalhe = await panel.evaluate(
-  async ([tk, id]) => {
-    const r = await fetch(`http://127.0.0.1:7331/api/recipes/${id}`, {
+  async ([tk, id, base]) => {
+    const r = await fetch(`${base}/api/recipes/${id}`, {
       headers: { "X-Griver-Token": tk },
     })
     const body = await r.json()
     return body.body ?? {}
   },
-  [token, gravada.id],
+  [token, gravada.id, serverUrl],
 )
 
 const passos = detalhe.steps ?? []
@@ -252,23 +262,23 @@ console.log("resultado na página:", JSON.stringify(textoResultado))
 
 // ── 9. limpeza: o teste não deixa lixo na base do usuário ─────────────────
 await panel.evaluate(
-  async ([tk, id]) => {
-    await fetch(`http://127.0.0.1:7331/api/recipes/${id}`, {
+  async ([tk, id, base]) => {
+    await fetch(`${base}/api/recipes/${id}`, {
       method: "DELETE",
       headers: { "X-Griver-Token": tk },
     })
   },
-  [token, gravada.id],
+  [token, gravada.id, serverUrl],
 )
 if (projeto.id) {
   await panel.evaluate(
-    async ([tk, id]) => {
-      await fetch(`http://127.0.0.1:7331/api/projects/${id}`, {
+    async ([tk, id, base]) => {
+      await fetch(`${base}/api/projects/${id}`, {
         method: "DELETE",
         headers: { "X-Griver-Token": tk },
       })
     },
-    [token, projeto.id],
+    [token, projeto.id, serverUrl],
   )
 }
 

@@ -11,6 +11,7 @@ import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = resolve("packages/extension/dist")
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -43,6 +44,8 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     "--no-default-browser-check",
   ],
 })
+
+fecharAoFalhar(context)
 
 const erros = []
 let worker = context.serviceWorkers()[0]
@@ -79,14 +82,21 @@ await panel.evaluate(() => {
     .find((b) => b.textContent?.trim() === "Conectar")
     ?.click()
 })
-await panel.waitForTimeout(1500)
+
+// espera a conexão ficar de fato online: sem isso a gravação começa sem o
+// servidor conectado e nenhum passo é registrado
+let online = false
+for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
+  await panel.waitForTimeout(500)
+  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
+}
+console.log("2. conectado ao servidor:", online ? "sim" : "NÃO")
 
 // volta para Receitas, onde fica o botão de gravar
 await panel.evaluate(() => {
   document.querySelector('.panel-header button[title="Receitas"]')?.click()
 })
 await panel.waitForTimeout(500)
-
 await page.bringToFront()
 await panel.evaluate(() => {
   const botao = Array.from(document.querySelectorAll("button")).find(

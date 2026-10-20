@@ -9,6 +9,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = resolve("packages/extension/dist")
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -24,6 +25,8 @@ const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir()
   ],
 })
 
+fecharAoFalhar(context)
+
 let worker = context.serviceWorkers()[0]
 if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })
 
@@ -36,7 +39,14 @@ await panel.evaluate(async ([url]) => {
 await panel.reload()
 // o painel é um módulo: espera o header existir antes de conferir a tela
 await panel.waitForSelector(".panel-header", { timeout: 15000 })
-await panel.waitForTimeout(1500)
+
+// espera a extensão conectar sozinha ao servidor
+let online = false
+for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
+  await panel.waitForTimeout(500)
+  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
+}
+console.log("0. conectado ao servidor:", online ? "sim" : "NÃO")
 
 const token = await panel.evaluate(async () => {
   const guardado = await chrome.storage.local.get("griver.token")
@@ -44,14 +54,14 @@ const token = await panel.evaluate(async () => {
 })
 const api = async (path, init) =>
   panel.evaluate(
-    async ([tk, p, i]) => {
-      const r = await fetch(`http://127.0.0.1:7331${p}`, {
+    async ([tk, p, i, base]) => {
+      const r = await fetch(`${base}${p}`, {
         ...(i ?? {}),
         headers: { "Content-Type": "application/json", "X-Griver-Token": tk },
       })
       return { status: r.status, body: await r.json().catch(() => null) }
     },
-    [token, path, init],
+    [token, path, init, serverUrl],
   )
 
 // ── 1. receitas aparecem sozinhas ─────────────────────────────────────────
@@ -140,7 +150,7 @@ await panel.evaluate(async () => {
 // ~10s (descoberta do serviço), então espera a mensagem chegar em vez de
 // contar com um prazo fixo
 let bolhas = []
-for (let tentativa = 0; tentativa < 30; tentativa++) {
+for (let tentativa = 0; tentativa < 60; tentativa++) {
   await panel.waitForTimeout(1000)
   bolhas = await panel.evaluate(() =>
     Array.from(document.querySelectorAll(".chat-msg")).map((b) => b.textContent?.trim()),

@@ -14,6 +14,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { fecharAoFalhar } from "./helpers.mjs"
 
 const extensionPath = resolve("packages/extension/dist")
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
@@ -30,6 +31,8 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     "--no-default-browser-check",
   ],
 })
+
+fecharAoFalhar(context)
 
 const erros = []
 
@@ -62,7 +65,13 @@ await panel.evaluate(() => {
     .find((b) => b.textContent?.trim() === "Conectar")
     ?.click()
 })
-await panel.waitForTimeout(1500)
+
+// espera a conexão ficar online antes de conferir a lista
+let online = false
+for (let tentativa = 0; tentativa < 20 && !online; tentativa++) {
+  await panel.waitForTimeout(500)
+  online = await panel.evaluate(() => Boolean(document.querySelector(".status-online")))
+}
 
 // volta para Receitas, que é a tela inicial
 await panel.evaluate(() => {
