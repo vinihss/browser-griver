@@ -70,30 +70,36 @@ pnpm dev:server
 
 ## Usando a extensão
 
-O painel lateral tem cinco abas.
+O painel lateral mostra **uma tela por vez**, alternada pelos botões do
+cabeçalho: **☰ Receitas**, **✦ Chat** e **⚙ Ajustes**. O **+** abre o modal
+*Add New Script* (nome e URL — a URL vira o `startUrl` da receita).
 
-**Projetos** — agrupa receitas. Cada projeto é um conjunto de automações.
-
-**Receitas** — lista as receitas do projeto, abre o editor JSON, valida,
-exporta e executa. Botões:
+**Receitas** — lista as receitas do servidor, todas elas, sem filtro de
+projeto. Cada linha traz o título e dois botões: **✎** edita e **▶** executa
+na aba atual. O editor em JSON aparece abaixo da lista quando uma receita está
+selecionada, com estes botões:
 
 - *Salvar* — grava o JSON editado
 - *Validar* — confere se os passos existem no alvo escolhido
 - *Executar aqui* — roda na aba atual
-- *Executar headless* — roda no servidor (Playwright ou Firecrawl)
 - *Exportar* — copia o código Playwright/Firecrawl gerado
+- *Remover* — apaga a receita
 
-**Gravar** — o gravador em si:
+O botão **● Gravar**, no topo da seção, não é uma tela: ele injeta um
+**overlay na própria página**, e é de lá que a gravação é controlada:
 
 1. Abra a página e clique em **● Gravar**
 2. Interaja normalmente — cliques, digitação, seleções e teclas são capturados
-3. **⏸ Pausar** / **▶ Continuar** interrupts a captura sem perder o contexto
-4. **■ Concluir** encerra e gera a receita
-5. **✕ Descartar** joga tudo fora
-6. Dê um nome e escolha o alvo (*browser* ou *os*) para salvar
+3. A lista **Steps** do overlay mostra os passos em tempo real
+4. **⏺ / ⏸** na barra pausa e retoma a captura sem perder o contexto
+5. **⏹ Stop** encerra e deixa a receita pronta
+6. **✎** ao lado de *Steps* abre o rascunho no editor do painel
+7. **Save** no overlay abre o modal *Add New Script* com a URL da gravação
 
-A URL inicial da página e cada navegação entram na receita como passo
-`navigate`. Senhas viram `{{secret}}` em vez do valor real.
+O overlay sobrevive a navegações: o estado da gravação mora no service worker,
+não na página. É por isso que o primeiro passo — quase sempre a URL inicial —
+não se perde. Cada navegação entra na receita como passo `navigate` e senhas
+viram `{{secret}}` em vez do valor real.
 
 **Chat** — conversa com o assistente. Ele lê e edita receitas, inspeciona a
 aba e executa ações no browser **mediante sua aprovação**.
@@ -185,6 +191,7 @@ valendo.
 ```sh
 griver serve [--port 7331] [--data-dir ./data]   # servidor + WebSocket
 griver doctor                                   # checa o ambiente
+griver cleanup                                  # encerra servidores órfãos
 griver project list|create|show|rm
 griver recipe list|new|show|export|validate|set|rm
 griver recipe history <id>                      # revisões
@@ -199,6 +206,25 @@ griver chat "adicione um passo que extraia o preço"
 `griver run` roda sem o servidor no ar — ele abre o banco e executa direto.
 Para aproveitar a sessão logada do navegador, use `--driver cdp` com um Chrome
 aberto em `--remote-debugging-port=9222`.
+
+### Servidores órfãos
+
+Um servidor que sobrevive a quem o started vira órfão: segura a porta e a
+memória sem ninguém para falar com ele. Numa máquina de desenvolvimento alguns
+chegam a ocupar gigabytes de RAM.
+
+O dono do servidor é o líder da sessão dele — o shell que pediu o servidor.
+Quando esse líder morre, o servidor fica sozinho. É a mesma regra do servidor
+(que se encerra sozinho) e do limpador:
+
+```sh
+griver cleanup          # encerra os órfãos e mostra quais eram
+griver cleanup --json   # a mesma coisa, em JSON
+```
+
+Quem tem dono vivo fica intacto. O limpador também se poupa: um servidor que
+foi started por um processo que já morreu é órfão, mas o dono dele é ele
+mesmo — e a limpeza não derruba a si próprio.
 
 ## O assistente de IA
 

@@ -159,10 +159,12 @@ projeto padrão chamado "Meus scripts" (criado uma única vez).
    - executa na aba atual do navegador
 2. Ou selecione a receita (✎) e use os botões do editor
    - "Executar aqui" — aba atual
-   - "Executar headless" — no servidor (Firecrawl para OS, Playwright para browser)
    - "Validar" — confere os passos contra o alvo
    - "Exportar" — copia o código gerado
    - "Remover" — apaga a receita
+
+> A execução headless (Playwright no servidor, ou Firecrawl para o alvo `os`)
+> continua disponível pela CLI e pela API — o painel lateral roda na aba.
 
 ### 5. **Validando uma Receita**
 
