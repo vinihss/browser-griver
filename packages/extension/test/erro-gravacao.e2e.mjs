@@ -24,9 +24,7 @@ await panel.waitForTimeout(800)
 
 // conecta
 await panel.evaluate(async () => {
-  Array.from(document.querySelectorAll(".tab"))
-    .find((t) => t.textContent?.includes("Ajustes"))
-    ?.click()
+  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
   await new Promise((r) => setTimeout(r, 300))
   Array.from(document.querySelectorAll("button"))
     .find((b) => b.textContent?.includes("Conectar"))
@@ -36,11 +34,9 @@ await panel.waitForTimeout(1500)
 
 // com a aba do painel ativa, gravar é impossível: precisa avisar
 await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".tab"))
-    .find((t) => t.textContent?.includes("Gravar"))
-    ?.click()
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
 })
-await panel.waitForTimeout(300)
+await panel.waitForTimeout(400)
 await panel.evaluate(() => {
   Array.from(document.querySelectorAll("button"))
     .find((b) => b.textContent?.trim() === "● Gravar")

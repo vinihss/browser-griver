@@ -52,9 +52,9 @@ const api = async (path, init) =>
     [token, path, init],
   )
 
-// ── 1. projetos aparecem sozinhos ─────────────────────────────────────────
-const anotados = await panel.evaluate(() => document.querySelectorAll(".list-item-title").length)
-console.log("1. projetos listados ao abrir o painel:", anotados)
+// ── 1. receitas aparecem sozinhas ─────────────────────────────────────────
+const anotados = await panel.evaluate(() => document.querySelectorAll(".recipe-row").length)
+console.log("1. receitas listadas ao abrir o painel:", anotados)
 
 // ── 2. gravar e executar ──────────────────────────────────────────────────
 const projeto = (await api("/api/projects", { method: "POST", body: JSON.stringify({ name: "Teste uso" }) }))
@@ -93,14 +93,12 @@ await page.bringToFront()
 // executa pela UI, como o usuário faz
 await panel.evaluate(
   async ([id]) => {
-    Array.from(document.querySelectorAll(".tab"))
-      .find((t) => t.textContent?.includes("Receitas"))
-      ?.click()
+    document.querySelector('.panel-header button[title="Receitas"]')?.click()
     await new Promise((r) => setTimeout(r, 600))
     // seleciona a receita na lista
-    const itens = Array.from(document.querySelectorAll(".list-item-main"))
+    const itens = Array.from(document.querySelectorAll(".recipe-row .truncate"))
     const alvo = itens.find((b) => b.textContent?.includes("Fluxo"))
-    alvo?.click()
+    alvo?.parentElement?.click()
     await new Promise((r) => setTimeout(r, 800))
     Array.from(document.querySelectorAll("button"))
       .find((b) => b.textContent?.trim() === "Executar aqui")
@@ -126,9 +124,7 @@ console.log("   resultado na página:", JSON.stringify(resultado))
 await panel.bringToFront()
 await panel.evaluate(async () => {
   // começa sem sessão, como um painel recém-aberto
-  Array.from(document.querySelectorAll(".tab"))
-    .find((t) => t.textContent?.includes("Chat"))
-    ?.click()
+  document.querySelector('.panel-header button[title="Chat"]')?.click()
   await new Promise((r) => setTimeout(r, 400))
   const campo = document.querySelector(".chat-input")
   campo.value = "qual é o próximo passo?"

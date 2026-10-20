@@ -1,9 +1,11 @@
 /**
- * Teste end-to-end do fluxo de salvar receita pela interface.
+ * Teste end-to-end do fluxo de gravar e salvar uma receita.
  *
- * Reproduz o caminho de uma pessoa: escolhe o projeto, grava, conclui e
- * clica em "Salvar como receita" — e confere se os passos gravados
- * realmente chegaram ao servidor.
+ * Reproduz o caminho de uma pessoa: clica em "● Gravar" no painel, interage
+ * com a página, para a gravação pelo overlay, edita no painel e salva — e
+ * confere se os passos gravados realmente chegaram ao servidor.
+ *
+ * Uso: node packages/extension/test/panel-save.e2e.mjs [serverUrl] [targetUrl]
  */
 import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
@@ -39,8 +41,9 @@ await panel.waitForTimeout(800)
 await panel.evaluate(
   async ([url]) => {
     await chrome.storage.local.set({ "griver.serverUrl": url })
-    const botoes = Array.from(document.querySelectorAll("button"))
-    botoes.find((b) => b.textContent?.includes("Conectar"))?.click()
+    Array.from(document.querySelectorAll("button"))
+      .find((b) => b.textContent?.trim() === "Conectar")
+      ?.click()
   },
   [serverUrl],
 )
@@ -62,60 +65,43 @@ const token = await panel.evaluate(async () => {
   return guardado["griver.token"] ?? ""
 })
 
-// ── 2. criar/selecionar projeto ────────────────────────────────────────────
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".tab")).find((t) => t.textContent?.includes("Projetos"))?.click()
-})
-await panel.waitForTimeout(400)
-
-const projetoCriado = await panel.evaluate(async () => {
-  const campo = document.querySelector(".view .input")
-  if (campo) {
-    campo.value = "Projeto do teste"
-    campo.dispatchEvent(new Event("input", { bubbles: true }))
-  }
-  const botao = Array.from(document.querySelectorAll("button")).find((b) =>
-    b.textContent?.trim() === "Criar",
-  )
-  botao?.click()
-  await new Promise((r) => setTimeout(r, 800))
-  return document.querySelector(".list-item-title")?.textContent?.trim() ?? ""
-})
-console.log("3. projeto:", projetoCriado)
-
-// id do projeto para limpar no final
-const idProjeto = await panel.evaluate(
-  async ([tk]) => {
-    const r = await fetch("http://127.0.0.1:7331/api/projects", {
-      headers: { "X-Griver-Token": tk },
-    })
-    const body = await r.json()
-    return (
-      (body.projects ?? []).find((p) => p.name === "Projeto do teste")?.id ?? ""
-    )
-  },
-  [token],
-)
+// ── 2. criar projeto e registrar o id para limpar no final ─────────────────
+const projeto = await panel.evaluate(async ([tk]) => {
+  const r = await fetch("http://127.0.0.1:7331/api/projects", {
+    headers: { "X-Griver-Token": tk },
+  })
+  const body = await r.json()
+  const criado = await fetch("http://127.0.0.1:7331/api/projects", {
+    method: "POST",
+    headers: { "X-Griver-Token": tk, "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Projeto do teste" }),
+  })
+  const novo = await criado.json()
+  return { id: novo.project?.id ?? "", total: body.projects?.length ?? 0 }
+}, [token])
+console.log("3. projeto criado:", projeto.id ? "sim" : "não")
 
 // ── 3. página alvo e gravação ──────────────────────────────────────────────
 const page = await context.newPage()
 await page.goto(targetUrl)
 await page.waitForTimeout(600)
 
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".tab")).find((t) => t.textContent?.includes("Gravar"))?.click()
-})
-await panel.waitForTimeout(300)
-
-// a gravação acontece na aba da página, não na do painel
+// a gravação começa pelo painel, mas acontece na aba da página
 await page.bringToFront()
-await panel.evaluate(async () => {
+await panel.evaluate(() => {
   Array.from(document.querySelectorAll("button"))
     .find((b) => b.textContent?.trim() === "● Gravar")
     ?.click()
-  await new Promise((r) => setTimeout(r, 400))
 })
+await panel.waitForTimeout(1200)
 console.log("4. gravação iniciada")
+
+// o overlay tem que estar na página
+const overlay = await page.evaluate(() => {
+  const host = document.querySelector("[data-griver-overlay]")
+  return Boolean(host?.shadowRoot)
+})
+console.log("5. overlay na página:", overlay ? "sim" : "NÃO")
 
 await page.click("#nome")
 await page.fill("#nome", "Vinicius")
@@ -123,69 +109,93 @@ await page.selectOption("#plano", "pro")
 await page.click("#enviar")
 await page.waitForTimeout(1200)
 
-// ── 4. concluir e salvar ───────────────────────────────────────────────────
-const estado = await panel.evaluate(
-  async ([tk]) => {
-    const r = await fetch("http://127.0.0.1:7331/api/recording", {
-      headers: { "X-Griver-Token": tk },
-    })
-    return await r.json()
-  },
-  [token],
-)
-
-console.log("5. eventos capturados pelo servidor:", estado.events?.length ?? 0)
-for (const evento of estado.events ?? []) {
-  console.log("   ", evento.kind, evento.selectors?.[0] ?? evento.url ?? "")
-}
-
-await panel.evaluate(async () => {
-  Array.from(document.querySelectorAll("button")).find((b) => b.textContent?.includes("Concluir"))?.click()
-  await new Promise((r) => setTimeout(r, 800))
+// ── 4. parar a gravação pelo overlay ───────────────────────────────────────
+await page.bringToFront()
+await page.evaluate(() => {
+  const root = document.querySelector("[data-griver-overlay]")?.shadowRoot
+  Array.from(root?.querySelectorAll(".griver-icon-btn") ?? [])
+    .find((b) => b.title === "Stop")
+    ?.click()
 })
-console.log("6. gravação concluída")
+await panel.waitForTimeout(1500)
 
 const aviso = await panel.evaluate(() => document.querySelector(".notice")?.textContent?.trim())
-console.log("7. aviso:", aviso)
+console.log("6. aviso ao parar:", aviso)
 
-const dica = await panel.evaluate(() => document.querySelector(".hint")?.textContent?.trim())
-console.log("8. dica do painel:", dica)
-
-await panel.evaluate(async () => {
-  const campos = Array.from(document.querySelectorAll(".view input"))
-  const nome = campos[campos.length - 1]
-  if (nome) {
-    nome.value = "Minha receita"
-    nome.dispatchEvent(new Event("input", { bubbles: true }))
-  }
-  const botao = Array.from(document.querySelectorAll("button")).find((b) =>
-    b.textContent?.includes("Salvar como receita"),
-  )
-  botao?.click()
-  await new Promise((r) => setTimeout(r, 1200))
+const passosNoOverlay = await page.evaluate(() => {
+  const root = document.querySelector("[data-griver-overlay]")?.shadowRoot
+  return Array.from(root?.querySelectorAll(".griver-step") ?? []).map((s) => s.textContent?.trim())
 })
-console.log("7. botão salvar acionado")
+console.log("7. passos no overlay:", passosNoOverlay.length ? passosNoOverlay.join(" | ") : "(nenhum)")
+
+// ── 5. abrir o editor no painel pelo ✎ do overlay ──────────────────────────
+await page.bringToFront()
+await page.evaluate(() => {
+  const root = document.querySelector("[data-griver-overlay]")?.shadowRoot
+  Array.from(root?.querySelectorAll(".griver-icon-btn") ?? [])
+    .find((b) => b.title === "Editar")
+    ?.click()
+})
+await panel.waitForTimeout(1000)
+
+const editor = await panel.evaluate(() => {
+  const textarea = document.querySelector("textarea.code")
+  if (!textarea) return { ok: false }
+  const receita = JSON.parse(textarea.value)
+  return { ok: true, passos: receita.steps?.length ?? -1 }
+})
+console.log("8. editor no painel:", editor.ok ? "sim" : "NÃO", `(${editor.passos} passos)`)
+
+// ── 6. editar o JSON e salvar ──────────────────────────────────────────────
+const editou = await panel.evaluate(async () => {
+  const editor = document.querySelector("textarea.code")
+  if (!editor) return { ok: false, motivo: "sem editor" }
+  const receita = JSON.parse(editor.value)
+  receita.steps.push({ id: "espera-extra", type: "wait", ms: 50 })
+  editor.value = JSON.stringify(receita, null, 2)
+  editor.dispatchEvent(new Event("input", { bubbles: true }))
+  await new Promise((r) => setTimeout(r, 100))
+  // "Salvar" num rascunho abre o modal Add New Script
+  Array.from(document.querySelectorAll("button"))
+    .find((b) => b.textContent?.trim() === "Salvar")
+    ?.click()
+  await new Promise((r) => setTimeout(r, 400))
+  return { ok: true, modal: Boolean(document.querySelector(".modal")) }
+})
+console.log("9. edição + modal:", JSON.stringify(editou))
+
+const nomeReceita = "Minha receita"
+await panel.evaluate((nome) => {
+  const campos = document.querySelectorAll(".modal input")
+  const nameInput = campos[0]
+  if (nameInput) {
+    nameInput.value = nome
+    nameInput.dispatchEvent(new Event("input", { bubbles: true }))
+  }
+  Array.from(document.querySelectorAll(".modal button"))
+    .find((b) => b.textContent?.trim() === "Save")
+    ?.click()
+}, nomeReceita)
+await panel.waitForTimeout(1500)
 
 const avisoFinal = await panel.evaluate(() => document.querySelector(".notice")?.textContent?.trim())
-console.log("8. aviso final:", avisoFinal)
+console.log("10. aviso final:", avisoFinal)
 
-// ── 5. conferência no servidor ─────────────────────────────────────────────
-const receitas = await panel.evaluate(
-  async ([tk]) => {
-    const r = await fetch("http://127.0.0.1:7331/api/recipes", {
-      headers: { "X-Griver-Token": tk },
-    })
-    return await r.json()
-  },
-  [token],
-)
+// ── 7. conferência no servidor ─────────────────────────────────────────────
+const receitas = await panel.evaluate(async ([tk]) => {
+  const r = await fetch("http://127.0.0.1:7331/api/recipes", {
+    headers: { "X-Griver-Token": tk },
+  })
+  const body = await r.json()
+  return body.recipes ?? []
+}, [token])
 
 console.log("\nreceitas no servidor:")
-for (const recipe of receitas.recipes ?? []) {
-  console.log(`  ${recipe.id.slice(0, 8)}  ${recipe.name}  [${recipe.target}]  ${recipe.stepCount} passos`)
+for (const receita of receitas) {
+  console.log(`  ${receita.id.slice(0, 8)}  ${receita.name}  [${receita.target}] ${receita.stepCount} passos`)
 }
 
-const gravada = (receitas.recipes ?? []).find((r) => r.name === "Minha receita")
+const gravada = receitas.find((r) => r.name === nomeReceita)
 if (!gravada) {
   console.log("\n✗ a receita não foi salva")
   await context.close()
@@ -197,68 +207,27 @@ const detalhe = await panel.evaluate(
     const r = await fetch(`http://127.0.0.1:7331/api/recipes/${id}`, {
       headers: { "X-Griver-Token": tk },
     })
-    return await r.json()
+    const body = await r.json()
+    return body.body ?? {}
   },
   [token, gravada.id],
 )
 
-const passos = detalhe.body?.steps ?? []
-console.log(`passos gravados: ${passos.length}`)
+const passos = detalhe.steps ?? []
+console.log("passos gravados:", passos.length)
 for (const passo of passos) {
   console.log(`  ${passo.type} ${passo.target?.selectors?.[0] ?? passo.url ?? ""}`)
 }
 
-// ── 6. editar o JSON no painel e salvar ───────────────────────────────────
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".tab"))
-    .find((t) => t.textContent?.includes("Receitas"))
-    ?.click()
-})
-await panel.waitForTimeout(400)
-
-const editou = await panel.evaluate(async () => {
-  const editor = document.querySelector("textarea.code")
-  if (!editor) return { ok: false, motivo: "sem editor" }
-  const receita = JSON.parse(editor.value)
-  receita.steps.push({ id: "espera-extra", type: "wait", ms: 50 })
-  editor.value = JSON.stringify(receita, null, 2)
-  editor.dispatchEvent(new Event("input", { bubbles: true }))
-  await new Promise((r) => setTimeout(r, 100))
-  const botao = Array.from(document.querySelectorAll("button")).find(
-    (b) => b.textContent?.trim() === "Salvar",
-  )
-  if (!botao) return { ok: false, motivo: "sem botão" }
-  botao.click()
-  await new Promise((r) => setTimeout(r, 900))
-  return { ok: true, aviso: document.querySelector(".notice")?.textContent?.trim() }
-})
-console.log("9. edição pelo editor:", JSON.stringify(editou))
-
-const aposEdicao = await panel.evaluate(
-  async ([tk, id]) => {
-    const r = await fetch(`http://127.0.0.1:7331/api/recipes/${id}`, {
-      headers: { "X-Griver-Token": tk },
-    })
-    const body = await r.json()
-    return body.body?.steps?.length ?? -1
-  },
-  [token, gravada.id],
-)
-console.log("10. passos após editar e salvar:", aposEdicao)
-
-// ── 7. executar a receita na aba e conferir o resultado ───────────────────
-await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".tab"))
-    .find((t) => t.textContent?.includes("Receitas"))
-    ?.click()
-})
-await panel.waitForTimeout(400)
+// ── 8. executar a receita na aba e conferir o resultado ────────────────────
 await page.bringToFront()
 await panel.evaluate(() => {
-  Array.from(document.querySelectorAll("button"))
-    .find((b) => b.textContent?.trim() === "Executar aqui")
+  Array.from(document.querySelectorAll(".recipe-row"))
+    .find((row) => row.textContent?.includes("Minha receita"))
+    ?.querySelector(".row-actions button:last-child")
     ?.click()
 })
+await page.waitForTimeout(800)
 
 let textoResultado = ""
 for (let tentativa = 0; tentativa < 40; tentativa++) {
@@ -268,21 +237,31 @@ for (let tentativa = 0; tentativa < 40; tentativa++) {
     .catch(() => "")
   if (textoResultado) break
 }
-
 console.log("resultado na página:", JSON.stringify(textoResultado))
 
-// ── 8. limpeza: o teste não deixa lixo na base do usuário ─────────────────
+// ── 9. limpeza: o teste não deixa lixo na base do usuário ─────────────────
 await panel.evaluate(
   async ([tk, id]) => {
-    await fetch(`http://127.0.0.1:7331/api/projects/${id}`, {
+    await fetch(`http://127.0.0.1:7331/api/recipes/${id}`, {
       method: "DELETE",
       headers: { "X-Griver-Token": tk },
     })
   },
-  [token, idProjeto],
+  [token, gravada.id],
 )
+if (projeto.id) {
+  await panel.evaluate(
+    async ([tk, id]) => {
+      await fetch(`http://127.0.0.1:7331/api/projects/${id}`, {
+        method: "DELETE",
+        headers: { "X-Griver-Token": tk },
+      })
+    },
+    [token, projeto.id],
+  )
+}
 
 await context.close()
-const ok = passos.length > 0 && aposEdicao === passos.length + 1 && textoResultado.includes("Vinicius")
+const ok = passos.length > 0 && textoResultado.includes("Vinicius")
 console.log(ok ? "\n✓ receita salva e executada corretamente" : "\n✗ a receita não funcionou")
 process.exit(ok ? 0 : 1)

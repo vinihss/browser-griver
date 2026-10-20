@@ -45,9 +45,7 @@ console.log("3. configurações semeadas")
 
 // reconecta pelo próprio painel (aba Ajustes)
 await panel.evaluate(() => {
-  Array.from(document.querySelectorAll(".tab"))
-    .find((t) => t.textContent?.includes("Ajustes"))
-    ?.click()
+  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
 })
 await panel.waitForTimeout(400)
 await panel.evaluate(() => {
