@@ -4,6 +4,7 @@
  * Arquivo JavaScript puro: os e2e rodam com `node`, sem etapa de
  * compilação — anotação de tipo aqui quebraria a execução.
  */
+import { resolve } from "node:path"
 
 /** Endereço padrão do servidor local. */
 export const SERVER_URL = process.env.GRIVER_SERVER_URL ?? "http://127.0.0.1:7331"
@@ -53,16 +54,47 @@ export async function esperaConectado(panel, tentativas = 20) {
 }
 
 /**
+ * Aponta a extensão para um servidor antes de o painel abrir.
+ *
+ * O painel nasce com o endereço padrão (7331) e já sai buscando receitas e
+ * token. Gravar o endereço antes evita as chamadas ao servidor errado — que
+ * viram erro de console e, num token de outro servidor, 401.
+ */
+export async function apontaParaServidor(worker, serverUrl = SERVER_URL) {
+  await worker.evaluate(async ([url]) => {
+    // o token guardado é do servidor anterior: ele não autentica neste
+    await chrome.storage.local.set({ "griver.serverUrl": url, "griver.token": "" })
+  }, [serverUrl])
+}
+
+/**
  * Conecta a extensão ao servidor.
  *
  * O botão "Conectar" fica na tela de Ajustes — o painel abre em Receitas.
+ *
+ * O endereço vai pelo campo de texto, e não direto para o storage: o painel
+ * guarda o servidor numa variável em memória e usa o valor de lá ao
+ * conectar. Escrever no storage por baixo dos panos deixa o painel
+ * apontando para o servidor padrão (7331) — a extensão conecta na porta
+ * errada e as chamadas depois levam 401.
  */
 export async function conectar(panel, serverUrl = SERVER_URL) {
-  await panel.evaluate(async ([url]) => {
-    await chrome.storage.local.set({ "griver.serverUrl": url })
+  await panel.evaluate(() => {
     document.querySelector('.panel-header button[title="Ajustes"]')?.click()
-  }, [serverUrl])
+  })
   await panel.waitForTimeout(400)
+
+  const digitou = await panel.evaluate((url) => {
+    const campo = Array.from(document.querySelectorAll("label.field")).find(
+      (l) => l.querySelector(".field-label")?.textContent?.trim() === "Servidor",
+    )
+    const input = campo?.querySelector("input")
+    if (!input) return false
+    input.value = url
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+    return true
+  }, serverUrl)
+  if (!digitou) return false
 
   await panel.evaluate(() => {
     Array.from(document.querySelectorAll("button"))
@@ -80,3 +112,15 @@ export async function conectar(panel, serverUrl = SERVER_URL) {
   await panel.waitForTimeout(400)
   return true
 }
+
+/**
+ * Caminho da extensão carregada no Chrome.
+ *
+ * `GRIVER_EXTENSION_PATH` aponta para uma cópia do build: outra execução
+ * pode regerar o `dist` no meio do teste e trocar os arquivos debaixo do
+ * navegador.
+ */
+export const EXTENSION_PATH = resolve(
+  process.env.GRIVER_EXTENSION_PATH ?? "packages/extension/dist",
+)
+

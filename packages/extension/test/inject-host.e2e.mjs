@@ -10,16 +10,18 @@ import { chromium } from "playwright"
 import { createServer } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
-import { fecharAoFalhar } from "./helpers.mjs"
+import { join } from "node:path"
+import { EXTENSION_PATH, fecharAoFalhar } from "./helpers.mjs"
 
-const extensionPath = resolve("packages/extension/dist")
+const extensionPath = EXTENSION_PATH
 
 const server = createServer((_req, res) => {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
   res.end("<!doctype html><title>Teste</title><button id='b'>Botão</button>")
 })
-await new Promise((resolve_) => server.listen(8099, "::1", () => resolve_()))
+// porta efêmera: duas suítes rodando ao mesmo tempo não disputam a 8099
+await new Promise((resolve_) => server.listen(0, "::1", () => resolve_()))
+const { port } = server.address()
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-perm-")), {
   headless: false,
@@ -36,7 +38,7 @@ let worker = context.serviceWorkers()[0]
 if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })
 
 const page = await context.newPage()
-await page.goto("http://[::1]:8099/")
+await page.goto(`http://[::1]:${port}/`)
 await page.waitForTimeout(800)
 
 const resultado = await worker.evaluate(async () => {

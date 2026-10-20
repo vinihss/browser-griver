@@ -6,16 +6,18 @@ import { chromium } from "playwright"
 import { createServer } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
-import { fecharAoFalhar } from "./helpers.mjs"
+import { join } from "node:path"
+import { EXTENSION_PATH, fecharAoFalhar } from "./helpers.mjs"
 
-const extensionPath = resolve("packages/extension/dist")
+const extensionPath = EXTENSION_PATH
 
 const server = createServer((_req, res) => {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
   res.end("<!doctype html><title>Destino</title><h1 id='ok'>destino</h1>")
 })
-await new Promise((resolve_) => server.listen(8099, "::1", () => resolve_()))
+// porta efêmera: duas suítes rodando ao mesmo tempo não disputam a 8099
+await new Promise((resolve_) => server.listen(0, "::1", () => resolve_()))
+const { port } = server.address()
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-nav-")), {
   headless: false,
@@ -32,15 +34,15 @@ let worker = context.serviceWorkers()[0]
 if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })
 
 const page = await context.newPage()
-await page.goto("http://[::1]:8099/")
+await page.goto(`http://[::1]:${port}/`)
 await page.waitForTimeout(600)
 
-const resultado = await worker.evaluate(async () => {
+const resultado = await worker.evaluate(async ([porta]) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   if (!tab?.id) return { erro: "sem aba" }
   const indo = []
   try {
-    await chrome.tabs.update(tab.id, { url: "http://[::1]:8099/destino" })
+    await chrome.tabs.update(tab.id, { url: `http://[::1]:${porta}/destino` })
     indo.push("destino ok")
   } catch (error) {
     indo.push(`destino falhou: ${error}`)
@@ -52,9 +54,13 @@ const resultado = await worker.evaluate(async () => {
     indo.push(`https falhou: ${error}`)
   }
   return { indo }
-})
+}, [port])
 
 console.log(JSON.stringify(resultado, null, 1))
 
 await context.close()
 server.close()
+
+// sem permissão de host o Chrome recusa a navegação: o teste precisa falhar
+const navegou = (resultado?.indo?.length ?? 0) === 2 && resultado.indo.every((linha) => !linha.includes("falhou"))
+process.exit(navegou ? 0 : 1)

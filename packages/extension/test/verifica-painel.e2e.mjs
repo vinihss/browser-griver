@@ -13,10 +13,10 @@
 import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
-import { fecharAoFalhar } from "./helpers.mjs"
+import { join } from "node:path"
+import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar } from "./helpers.mjs"
 
-const extensionPath = resolve("packages/extension/dist")
+const extensionPath = EXTENSION_PATH
 const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
 
 const userDataDir = mkdtempSync(join(tmpdir(), "griver-verifica-"))
@@ -38,6 +38,10 @@ const erros = []
 
 let worker = context.serviceWorkers()[0]
 if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 20000 })
+
+// o endereço do servidor é gravado antes do painel abrir: senão ele nasce
+// apontando para o servidor padrão e erra o endereço
+await apontaParaServidor(worker, serverUrl)
 
 const panelUrl = `chrome-extension://${new URL(worker.url()).host}/panel.html`
 const panel = await context.newPage()

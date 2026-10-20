@@ -11,7 +11,16 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const root = dirname(fileURLToPath(import.meta.url))
-const outdir = join(root, "dist")
+/**
+ * Onde o build vai parar.
+ *
+ * `--outdir <caminho>` escreve numa pasta à escolha. O `dist` compartilhado é
+ * apagado no começo do build, e um teste que está rodando com a extensão
+ * carregada perde os arquivos no meio do caminho. Uma cópia particular
+ * resolve: cada execução constrói a sua e ninguém atrapalha ninguém.
+ */
+const outdirArg = process.argv.indexOf("--outdir")
+const outdir = outdirArg >= 0 ? resolve(process.argv[outdirArg + 1]) : join(root, "dist")
 const watch = process.argv.includes("--watch")
 
 rmSync(outdir, { recursive: true, force: true })

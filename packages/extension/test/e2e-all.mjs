@@ -8,10 +8,17 @@
  */
 import { spawn, execSync } from "node:child_process"
 import { mkdtempSync, rmSync } from "node:fs"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
-const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
+/**
+ * Endereço do servidor usado pelos testes.
+ *
+ * Sem argumento, a suíte sobe o próprio servidor (porta e banco próprios).
+ * Com argumento, usa o servidor indicado.
+ */
+const servidorInformado = process.argv[2]
 
 /**
  * Diretório de perfis só desta execução.
@@ -29,6 +36,9 @@ const TESTES = [
   "panel-save",
   "uso-real",
   "erro-gravacao",
+  // permissão de host: base da gravação por extensão e da execução na aba
+  "inject-host",
+  "navegar-host",
 ]
 
 /** Tempo máximo de um teste antes de ser considerado travado. */
@@ -100,7 +110,110 @@ function matarGrupo(proc) {
   }
 }
 
+/**
+ * Reserva uma porta livre para o servidor da suíte.
+ *
+ * Deixa o sistema escolher evita cair na porta de outra execução: duas
+ * suítes em paralelo não podem compartilhar servidor nem banco.
+ */
+function portaLivre() {
+  return new Promise((resolvePorta, reject) => {
+    const sonda = createServer()
+    sonda.unref()
+    sonda.on("error", reject)
+    sonda.listen(0, "127.0.0.1", () => {
+      const endereco = sonda.address()
+      const porta = typeof endereco === "object" && endereco ? endereco.port : 0
+      sonda.close(() => resolvePorta(porta))
+    })
+  })
+}
+
+/**
+ * Cria um projeto e uma receita no servidor.
+ *
+ * O painel só mostra a seção de Receitas quando existe alguma receita
+ * salva: sem a semente, o teste do painel reprova por falta de conteúdo.
+ */
+async function semear(url) {
+  // o token protege as rotas de escrita: sem ele o servidor devolve 401
+  const { token } = await fetch(`${url}/api/extension-token`).then((r) => r.json())
+  const headers = { "content-type": "application/json", "x-griver-token": token }
+
+  const projeto = await fetch(`${url}/api/projects`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name: "Teste uso" }),
+  }).then((r) => r.json())
+
+  await fetch(`${url}/api/recipes`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      projectId: projeto.project.id,
+      name: "Fluxo",
+      target: "browser",
+      recipe: { version: 1, steps: [] },
+    }),
+  })
+}
+
+/**
+ * Sobe um servidor isolado para a suíte.
+ *
+ * Servidor próprio por execução: o roteamento de comandos do servidor entrega
+ * a requisição à primeira extensão conectada, e suítes rodando em paralelo
+ * contra o mesmo servidor passam o `navigate` de uma para a aba de outra — o
+ * teste morre com "Execution context was destroyed".
+ */
+async function subirServidor() {
+  const porta = await portaLivre()
+  const url = `http://127.0.0.1:${porta}`
+  const dadosDir = mkdtempSync(join(tmpdir(), "griver-suite-dados-"))
+
+  const proc = spawn("pnpm", ["exec", "tsx", "src/main.ts"], {
+    cwd: resolve("packages/server"),
+    env: { ...process.env, GRIVER_PORT: String(porta), GRIVER_DATA_DIR: dadosDir },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  })
+
+  let saida = ""
+  proc.stdout?.on("data", (d) => {
+    saida += d.toString()
+  })
+  proc.stderr?.on("data", (d) => {
+    saida += d.toString()
+  })
+
+  // espera o servidor responder
+  let pronto = false
+  for (let tentativa = 0; tentativa < 60 && !pronto; tentativa++) {
+    try {
+      const resposta = await fetch(`${url}/api/health`)
+      pronto = resposta.ok
+    } catch {
+      // ainda subindo
+    }
+    if (!pronto) await new Promise((r) => setTimeout(r, 500))
+  }
+
+  if (!pronto) {
+    matarGrupo(proc)
+    throw new Error(`servidor não subiu na porta ${porta}\n${saida}`)
+  }
+
+  // a semente fica fora do laço: um erro aqui precisa aparecer, senão a
+  // falha real se esconde atrás de "não subiu"
+  await semear(url)
+  console.log(`servidor isolado: ${url}\n`)
+  return { url, proc, dadosDir }
+}
+
 let falhou = false
+
+const servidor = servidorInformado ? null : await subirServidor()
+const serverUrl = servidorInformado ?? servidor.url
 
 for (const nome of TESTES) {
   limparChrome()
@@ -135,6 +248,16 @@ for (const nome of TESTES) {
 }
 
 limparChrome()
+
+// derruba o servidor isolado antes de sair: ele fica esperando conexões
+if (servidor) {
+  matarGrupo(servidor.proc)
+  try {
+    rmSync(servidor.dadosDir, { recursive: true, force: true })
+  } catch {
+    // o banco temporário pode ficar para trás; não é motivo para falhar
+  }
+}
 
 try {
   rmSync(perfilBase, { recursive: true, force: true })
