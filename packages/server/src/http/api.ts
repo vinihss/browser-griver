@@ -258,10 +258,8 @@ export function registerApi(router: Router, ctx: ApiContext): Router {
         driver,
         status: "running",
       })
-      gateway.broadcast({ type: "run.started", run })
-      void tabRuns
-        .requestRun(run.id, found.summary.id, found.body, body.vars)
-        .then(() => gateway.broadcast({ type: "run.finished", run: repo.getRun(run.id)! }))
+      // o começo e o fim da execução vão só para a extensão que a executa
+      void tabRuns.requestRun(run, found.summary.id, found.body, body.vars)
       return { runId: run.id }
     }
 

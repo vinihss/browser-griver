@@ -1,4 +1,4 @@
-import type { Recipe, RunResult, StepEvent } from "@griver/core"
+import type { Recipe, RunResult, RunSummary, StepEvent } from "@griver/core"
 import type { Repository } from "../db/repo.js"
 import type { WsGateway, ClientConnection } from "../ws/gateway.js"
 
@@ -29,9 +29,13 @@ export class TabRunCoordinator {
    * partiu de uma chamada HTTP. Enviar para todas faria cada extensão
    * executar a receita na sua aba ativa — sequestrando abas de outros
    * navegadores.
+   *
+   * O começo e o fim da execução também vão só para ela: o painel de outra
+   * extensão mostrar "Execução concluída" por uma receita que rodou em
+   * outro navegador confunde quem está usando.
    */
   async requestRun(
-    runId: string,
+    run: RunSummary,
     recipeId: string,
     recipe: Recipe,
     vars?: Record<string, unknown>,
@@ -46,7 +50,7 @@ export class TabRunCoordinator {
         error: { message: "nenhuma extensão conectada" },
         steps: [],
       }
-      this.repo.updateRun(runId, {
+      this.repo.updateRun(run.id, {
         status: "error",
         endedAt: Date.now(),
         error: result.error?.message,
@@ -56,9 +60,11 @@ export class TabRunCoordinator {
       return result
     }
 
+    this.gateway.send(client, { type: "run.started", run })
+
     const result = await new Promise<RunResult>((resolve) => {
       const timer = setTimeout(() => {
-        this.pending.delete(runId)
+        this.pending.delete(run.id)
         resolve({
           status: "error",
           scope: {},
@@ -67,23 +73,26 @@ export class TabRunCoordinator {
         })
       }, timeoutMs)
 
-      this.pending.set(runId, { resolve, timer })
+      this.pending.set(run.id, { resolve, timer })
       this.gateway.send(client, {
         type: "run.request",
-        runId,
+        runId: run.id,
         recipeId,
         recipe,
         vars,
       })
     })
 
-    this.repo.updateRun(runId, {
+    this.repo.updateRun(run.id, {
       status: result.status,
       endedAt: Date.now(),
       error: result.error?.message,
       scope: result.scope,
       log: result.steps,
     })
+
+    const finished = this.repo.getRun(run.id)
+    if (finished) this.gateway.send(client, { type: "run.finished", run: finished })
     return result
   }
 

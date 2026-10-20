@@ -304,22 +304,15 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
       driver,
       status: "running",
     })
-    wsGateway.broadcast({ type: "run.started", run })
-
     if (driver === "tab") {
       // a execução vai para a extensão que pediu: é a aba dela que deve
       // rodar a receita, não a de qualquer outra extensão conectada
-      const result = await tabRuns.requestRun(
-        run.id,
-        found.summary.id,
-        found.body,
-        vars,
-        client,
-      )
-      wsGateway.broadcast({ type: "run.finished", run: repo.getRun(run.id)! })
+      const result = await tabRuns.requestRun(run, found.summary.id, found.body, vars, client)
       void result
       return
     }
+
+    wsGateway.broadcast({ type: "run.started", run })
 
     await runs.start({
       recipe: found.body,
