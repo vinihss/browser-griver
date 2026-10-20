@@ -70,6 +70,13 @@ jobs:
       - name: Instalar dependências
         run: pnpm install --frozen-lockfile
 
+      # A suíte constrói a extensão dela mesma, mas o esbuild resolve o
+      # `@griver/core` pelo `dist` do pacote — sem ele, o bundle morre com
+      # "Could not resolve @griver/core". Compilar o workspace antes é o
+      # que faz a extensão existir.
+      - name: Compilar o workspace
+        run: pnpm build
+
       # O Chromium completo, não o "headless shell": só o binário completo
       # carrega extensão MV3, e sem ele o service worker nunca aparece.
       - name: Instalar o navegador
