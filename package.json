@@ -21,6 +21,7 @@
     "dev": "node scripts/tasks.mjs dev",
     "link-cli": "node scripts/tasks.mjs link-cli",
     "package": "node scripts/tasks.mjs package",
+    "schema": "node scripts/tasks.mjs schema",
     "clean": "node scripts/tasks.mjs clean",
     "test": "node scripts/tasks.mjs test",
     "test:e2e:all": "node scripts/tasks.mjs e2e",

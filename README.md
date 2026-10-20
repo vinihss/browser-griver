@@ -67,6 +67,7 @@ atalhos são `pnpm <tarefa>`; o mesmo caminho pelo repositório é
 | `pnpm test` | os testes unitários dos três pacotes |
 | `pnpm test:e2e:all` | a suíte end-to-end (Chromium de verdade, headless) |
 | `pnpm package` | gera o `griver-extension.zip` |
+| `pnpm schema` | gera o `docs/recipe.schema.json` a partir do schema Zod |
 | `pnpm link-cli` | linka o `griver` no diretório global de binários |
 | `pnpm clean` | remove `dist`, `tsbuildinfo` e o zip |
 | `pnpm dev:server` | sobe o servidor local |

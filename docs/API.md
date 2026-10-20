@@ -140,6 +140,29 @@ WebSocket. `firecrawl` diz se a chave da API está configurada.
 { "name": "griver", "version": "0.1.0", "extensions": 1 }
 ```
 
+### `GET /api/schema/recipe`
+
+O **JSON Schema da receita**, em draft 2020-12.
+
+Ele sai do schema Zod, então nunca sai de sincronia com o que o servidor
+aceita. Serve para o editor da extensão (autocomplete e validação) e para
+qualquer editor externo que queira validar uma receita sem conhecer o
+Griver.
+
+A mesma coisa está em `docs/recipe.schema.json`, gerada por `pnpm schema`.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": { "type": "number", "const": 1 },
+    "steps": { "type": "array", "items": { "$ref": "#/$defs/__schema0" } }
+  },
+  "required": ["version", "steps"]
+}
+```
+
 ## Projetos
 
 ### `GET /api/projects`

@@ -1,6 +1,7 @@
 import {
   compileToFirecrawl,
   compileToPlaywright,
+  recipeJsonSchema,
   safeParseRecipe,
   validateForTarget,
   type Recipe,
@@ -44,6 +45,16 @@ export function registerApi(router: Router, ctx: ApiContext): Router {
     version: ctx.version,
     extensions: gateway.connectionCount,
   }))
+
+  /**
+   * O schema da receita, em JSON Schema.
+   *
+   * Ele sai do Zod, então nunca sai de sincronia com o que o servidor
+   * aceita. Serve para o editor da extensão (autocomplete e validação) e
+   * para qualquer editor externo que queira validar uma receita sem
+   * conhecer o Griver.
+   */
+  router.get("/api/schema/recipe", () => recipeJsonSchema())
 
   /**
    * Token de acesso, para a própria extensão.

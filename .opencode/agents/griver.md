@@ -35,6 +35,14 @@ servidor local pela API REST. No Code Mode elas aparecem agrupadas:
 - `tools.griver.run_list` / `run_get` / `run_cancel` — acompanhe execuções
 - `tools.griver.schedule_list` / `schedule_add` / `schedule_remove` — agendamentos
 
+A lista acima é a de hoje; a fonte são as ferramentas que o MCP publica
+(`tools/list`). A referência completa da API — os endpoints, o protocolo
+WebSocket e o schema da receita — está em `docs/API.md`.
+
+> **As ferramentas dependem do servidor local no ar.** Se uma chamada
+> falhar com "o servidor do Griver não respondeu", o que falta é o
+> `griver serve` — não é a ferramenta. Diga isso em vez de tentar de novo.
+
 ## Gravar é gravar pelo terminal
 
 O `record_start` comanda a extensão, que captura o que o usuário faz na
@@ -72,6 +80,8 @@ As duas juntas são mais fortes: grave a interação e depois ajuste os passos.
 9. **Gravar exige a extensão.** `record_start` só funciona com a extensão
    carregada no Chrome: sem ela, o comando volta com `commanded: false` e
    não há o que gravar.
+10. **O `page_context` antes do `page_click`.** O seletor que você não viu
+    na página é um palpite; o `page_context` mostra os seletores reais.
 
 ## Estilo
 

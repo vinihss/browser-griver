@@ -138,6 +138,28 @@ test("compila a receita para Playwright", async () => {
   })
 })
 
+test("publica o schema da receita", async () => {
+  await withServer(async (base, token) => {
+    const call = api(base, token)
+    const response = await call("/api/schema/recipe")
+    assert.equal(response.status, 200)
+
+    const schema = response.body as {
+      $schema: string
+      $defs: Record<string, { oneOf: { properties: { type: { const: string } } }[] }>
+      properties: { steps: { items: { $ref: string } } }
+    }
+    assert.match(schema.$schema, /json-schema\.org/)
+
+    // o schema vem do Zod: os passos que ele descreve são os que o
+    // servidor aceita
+    const referencia = schema.properties.steps.items.$ref.replace("#/$defs/", "")
+    const tipos = schema.$defs[referencia]!.oneOf.map((passo) => passo.properties.type.const)
+    assert.ok(tipos.includes("navigate"))
+    assert.ok(tipos.includes("extract"))
+  })
+})
+
 test("grava, pausa e descarta uma gravação", async () => {
   await withServer(async (base, token) => {
     const call = api(base, token)

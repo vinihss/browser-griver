@@ -173,6 +173,11 @@ monta a sua cópia (`--outdir`).
 de insistir com o velho: o servidor pode ter sido reiniciado com outro
 token no meio do caminho.
 
+**O schema da receita é publicado, não escrito à mão.** O `JSON Schema`
+sai do Zod (`GET /api/schema/recipe` e `docs/recipe.schema.json`), então
+nunca sai de sincronia com o que o servidor aceita. Um schema escrito à mão
+seria uma segunda fonte da verdade — e as duas divergiriam.
+
 ## Referências
 
 | Documento | O que tem |
@@ -180,4 +185,4 @@ token no meio do caminho.
 | [README](../README.md) | instalação, uso, o formato da receita, a CLI, o MCP |
 | [API.md](./API.md) | os endpoints, o protocolo WebSocket e as ferramentas do MCP |
 | [EXTENSAO.md](./EXTENSAO.md) | o painel, a gravação e o troubleshooting da extensão |
-| [AGENTES.md](./AGENTES.md) | como um agente trabalha neste repositório |
+| [AGENTS.md](../AGENTS.md) | como um agente trabalha neste repositório |

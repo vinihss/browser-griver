@@ -14,7 +14,7 @@
  * dados segue o `cwd`, não a raiz do repositório.
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process"
-import { chmodSync, existsSync, readdirSync, rmSync, statSync } from "node:fs"
+import { chmodSync, existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -176,6 +176,24 @@ function instalar() {
 }
 
 /**
+ * O JSON Schema da receita, em `docs/recipe.schema.json`.
+ *
+ * Ele sai do Zod, então nunca sai de sincronia com o que o servidor
+ * aceita. É o que permite a um editor externo — ou ao autocomplete do
+ * painel — validar uma receita sem conhecer o Griver.
+ */
+async function gerarSchema() {
+  if (!existsSync(join(raiz, "packages", "core", "dist", "index.js"))) {
+    console.log("o core não está compilado — compilando antes de gerar o schema")
+    compilar()
+  }
+  const { recipeJsonSchema } = await import("@griver/core")
+  const destino = join(raiz, "docs", "recipe.schema.json")
+  writeFileSync(destino, `${JSON.stringify(recipeJsonSchema(), null, 2)}\n`)
+  console.log(`\n  schema: ${destino}`)
+}
+
+/**
  * O caminho completo: instalar, compilar, linkar e empacotar.
  *
  * É o que um clone novo precisa para virar uma máquina de trabalho: as
@@ -187,11 +205,12 @@ function instalar() {
  * Griver recebe outra coisa. Mesma razão para `deps` (em vez de `install`)
  * e `link-cli` (em vez de `link`).
  */
-function instalarTudo() {
+async function instalarTudo() {
   instalar()
   compilar()
   linkar()
   empacotar()
+  await gerarSchema()
   console.log("\npronto")
   console.log("  servidor:  griver serve")
   console.log("  extensão:  packages/extension/dist (chrome://extensions → Carregar sem compactação)")
@@ -263,6 +282,7 @@ const TAREFAS = {
   test: testar,
   e2e: testarE2e,
   package: empacotar,
+  schema: gerarSchema,
   "link-cli": linkar,
   clean: limpar,
   serve: servir,
@@ -284,6 +304,7 @@ griver — tarefas do projeto
   test       roda os testes unitários
   e2e        roda a suíte end-to-end (Chromium de verdade, headless)
   package    gera o griver-extension.zip
+  schema     gera o docs/recipe.schema.json a partir do schema Zod
   link-cli   linka o CLI no diretório global de binários
   clean      remove dist, tsbuildinfo e o zip
   serve      sobe o servidor local
