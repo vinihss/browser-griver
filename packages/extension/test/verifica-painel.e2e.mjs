@@ -46,7 +46,29 @@ panel.on("console", (msg) => {
 })
 
 await panel.goto(panelUrl)
-await panel.waitForTimeout(1200)
+// o painel é um módulo: espera o header existir antes de conferir a tela
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(800)
+
+// ── 0. conectar ao servidor ────────────────────────────────────────────────
+// o botão "Conectar" fica na tela de Ajustes
+await panel.evaluate(async ([url]) => {
+  await chrome.storage.local.set({ "griver.serverUrl": url })
+  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
+}, [serverUrl])
+await panel.waitForTimeout(400)
+await panel.evaluate(() => {
+  Array.from(document.querySelectorAll("button"))
+    .find((b) => b.textContent?.trim() === "Conectar")
+    ?.click()
+})
+await panel.waitForTimeout(1500)
+
+// volta para Receitas, que é a tela inicial
+await panel.evaluate(() => {
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
+})
+await panel.waitForTimeout(600)
 
 // ── 1. o painel renderizou? ────────────────────────────────────────────────
 const estrutura = await panel.evaluate(() => ({

@@ -34,7 +34,9 @@ await panel.evaluate(async ([url]) => {
   await chrome.storage.local.set({ "griver.serverUrl": url })
 }, [serverUrl])
 await panel.reload()
-await panel.waitForTimeout(2500)
+// o painel é um módulo: espera o header existir antes de conferir a tela
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(1500)
 
 const token = await panel.evaluate(async () => {
   const guardado = await chrome.storage.local.get("griver.token")
@@ -63,7 +65,8 @@ await panel.evaluate(async () => {
   await chrome.runtime.sendMessage({ type: "panel:status" })
 })
 await panel.reload()
-await panel.waitForTimeout(1800)
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(1000)
 
 const page = await context.newPage()
 await page.goto(targetUrl)
@@ -133,18 +136,26 @@ await panel.evaluate(async () => {
     .find((b) => b.textContent?.trim() === "Enviar")
     ?.click()
 })
-await panel.waitForTimeout(6000)
-
-const bolhas = await panel.evaluate(() =>
-  Array.from(document.querySelectorAll(".chat-msg")).map((b) => b.textContent?.trim()),
-)
+// a primeira mensagem cria a sessão no OpenCode: num servidor frio isso leva
+// ~10s (descoberta do serviço), então espera a mensagem chegar em vez de
+// contar com um prazo fixo
+let bolhas = []
+for (let tentativa = 0; tentativa < 30; tentativa++) {
+  await panel.waitForTimeout(1000)
+  bolhas = await panel.evaluate(() =>
+    Array.from(document.querySelectorAll(".chat-msg")).map((b) => b.textContent?.trim()),
+  )
+  if (bolhas.some((b) => b?.includes("próximo passo"))) break
+}
 console.log("3. mensagens no chat:", JSON.stringify(bolhas.slice(0, 4)))
 
 const enviou = bolhas.some((b) => b?.includes("próximo passo"))
 const respondeu = bolhas.some((b) => b?.includes("assistente") || b?.includes("sistema"))
 
-// limpeza
-await api(`/api/projects/${projeto.id}`, { method: "DELETE" })
+// limpeza: falhar aqui não deve derrubar o teste, que já tem o que verifica
+await api(`/api/projects/${projeto.id}`, { method: "DELETE" }).catch((error) => {
+  console.log("   (limpeza ignorada:", error.message, ")")
+})
 await context.close()
 
 console.log(`\nprojetos: ${anotados > 0 ? "ok" : "FALHOU"}`)

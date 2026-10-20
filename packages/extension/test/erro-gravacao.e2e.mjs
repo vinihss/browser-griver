@@ -20,7 +20,10 @@ if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 200
 
 const panel = await context.newPage()
 await panel.goto(`chrome-extension://${new URL(worker.url()).host}/panel.html`)
-await panel.waitForTimeout(800)
+// o painel é um módulo: espera o header existir antes de clicar, senão o
+// `?.click()` vira no-op e o teste falha sem dizer por quê
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(500)
 
 // conecta
 await panel.evaluate(async () => {

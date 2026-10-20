@@ -49,15 +49,23 @@ page.on("pageerror", (error) => erros.push(`page: ${error.message}`))
 await page.goto(`file://${pagina}`)
 await page.waitForTimeout(500)
 await panel.goto(`chrome-extension://${new URL(worker.url()).host}/panel.html`)
-await panel.waitForTimeout(800)
+// o painel é um módulo: espera o header existir antes de clicar, senão o
+// `?.click()` vira no-op e o teste falha sem dizer por quê
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(500)
 
 // ── conectar ────────────────────────────────────────────────────────────────
+// o botão "Conectar" fica na tela de Ajustes
 await panel.evaluate(async ([url]) => {
   await chrome.storage.local.set({ "griver.serverUrl": url })
+  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
+}, [serverUrl])
+await panel.waitForTimeout(400)
+await panel.evaluate(() => {
   Array.from(document.querySelectorAll("button"))
     .find((b) => b.textContent?.trim() === "Conectar")
     ?.click()
-}, [serverUrl])
+})
 await panel.waitForTimeout(1500)
 
 const token = await panel.evaluate(async () => {
@@ -67,11 +75,21 @@ const token = await panel.evaluate(async () => {
 console.log("1. token obtido:", token ? "sim" : "NÃO")
 
 // ── o "+" abre o modal? ─────────────────────────────────────────────────────
+// o modal só existe na tela de Receitas: volta para lá antes de abrir
+await panel.evaluate(() => {
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
+})
+await panel.waitForTimeout(600)
+
 // o clique pode cair durante um redesenho do painel: tenta algumas vezes
 let modal = { ok: false, campos: [] }
 for (let tentativa = 0; tentativa < 5 && !modal.ok; tentativa++) {
   await panel.evaluate(() => {
-    document.querySelector('.panel-header button[title="Add New Script"]')?.click()
+    document
+      .querySelector(
+        '.panel-header button[title="Add New Script"], .panel-header button[aria-label="Add New Script"]',
+      )
+      ?.click()
   })
   await panel.waitForTimeout(400)
   modal = await panel.evaluate(() => {

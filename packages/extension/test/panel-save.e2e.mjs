@@ -35,19 +35,30 @@ if (!worker) worker = await context.waitForEvent("serviceworker", { timeout: 200
 const panelUrl = `chrome-extension://${new URL(worker.url()).host}/panel.html`
 const panel = await context.newPage()
 await panel.goto(panelUrl)
-await panel.waitForTimeout(800)
+// o painel é um módulo: espera o header existir antes de clicar, senão o
+// `?.click()` vira no-op e o teste falha sem dizer por quê
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(500)
 
 // ── 1. conectar ────────────────────────────────────────────────────────────
-await panel.evaluate(
-  async ([url]) => {
-    await chrome.storage.local.set({ "griver.serverUrl": url })
-    Array.from(document.querySelectorAll("button"))
-      .find((b) => b.textContent?.trim() === "Conectar")
-      ?.click()
-  },
-  [serverUrl],
-)
+// o botão "Conectar" fica na tela de Ajustes
+await panel.evaluate(async ([url]) => {
+  await chrome.storage.local.set({ "griver.serverUrl": url })
+  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
+}, [serverUrl])
+await panel.waitForTimeout(400)
+await panel.evaluate(() => {
+  Array.from(document.querySelectorAll("button"))
+    .find((b) => b.textContent?.trim() === "Conectar")
+    ?.click()
+})
 await panel.waitForTimeout(1500)
+
+// volta para Receitas, onde fica o botão de gravar
+await panel.evaluate(() => {
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
+})
+await panel.waitForTimeout(500)
 
 // o token deve ter vindo do servidor, sem colar nada
 const tokenObtido = await panel.evaluate(async () => {

@@ -63,16 +63,29 @@ console.log("1. overlay antes de gravar:", antes ? "sim (inesperado)" : "não (o
 
 // ── 2. conectar e iniciar a gravação pelo painel ────────────────────────────
 await panel.goto(`chrome-extension://${new URL(worker.url()).host}/panel.html`)
-await panel.waitForTimeout(900)
+// o painel é um módulo: espera o header existir antes de clicar, senão o
+// `?.click()` vira no-op e o teste falha sem dizer por quê
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(500)
 
 await panel.evaluate(async ([url]) => {
   await chrome.storage.local.set({ "griver.serverUrl": url })
-  const botao = Array.from(document.querySelectorAll("button")).find(
-    (b) => b.textContent?.trim() === "Conectar",
-  )
-  botao?.click()
+  // o botão "Conectar" fica na tela de Ajustes
+  document.querySelector('.panel-header button[title="Ajustes"]')?.click()
 }, [serverUrl])
+await panel.waitForTimeout(400)
+await panel.evaluate(() => {
+  Array.from(document.querySelectorAll("button"))
+    .find((b) => b.textContent?.trim() === "Conectar")
+    ?.click()
+})
 await panel.waitForTimeout(1500)
+
+// volta para Receitas, onde fica o botão de gravar
+await panel.evaluate(() => {
+  document.querySelector('.panel-header button[title="Receitas"]')?.click()
+})
+await panel.waitForTimeout(500)
 
 await page.bringToFront()
 await panel.evaluate(() => {

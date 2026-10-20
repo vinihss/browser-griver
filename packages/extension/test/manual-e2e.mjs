@@ -32,7 +32,9 @@ console.log("2. service worker:", worker.url())
 const panelUrl = `chrome-extension://${new URL(worker.url()).host}/panel.html`
 const panel = await context.newPage()
 await panel.goto(panelUrl)
-await panel.waitForTimeout(800)
+// o painel é um módulo: espera o header existir antes de interagir
+await panel.waitForSelector(".panel-header", { timeout: 15000 })
+await panel.waitForTimeout(500)
 
 await panel.evaluate(
   async ([url]) => {
