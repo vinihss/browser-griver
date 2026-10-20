@@ -114,35 +114,35 @@ const recorded = await worker.evaluate(async () => {
 console.log("7. interação concluída:", JSON.stringify(recorded))
 
 // os eventos de gravação chegaram ao servidor?
-const events = await panel.evaluate(async ([tk]) => {
-  const response = await fetch("http://127.0.0.1:7331/api/recording", {
+const events = await panel.evaluate(async ([tk, base]) => {
+  const response = await fetch(`${base}/api/recording`, {
     headers: { "X-Griver-Token": tk },
   })
   return await response.text()
-}, [token])
+}, [token, serverUrl])
 console.log("8. gravação no servidor:", events.slice(0, 700))
 
 // 9. concludes a gravação e obtém a receita
-const stopped = await panel.evaluate(async ([tk]) => {
-  const response = await fetch("http://127.0.0.1:7331/api/recording/stop", {
+const stopped = await panel.evaluate(async ([tk, base]) => {
+  const response = await fetch(`${base}/api/recording/stop`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Griver-Token": tk },
   })
   return await response.json()
-}, [token])
+}, [token, serverUrl])
 console.log("9. receita gerada:", JSON.stringify(stopped.recipe, null, 1).slice(0, 900))
 
 // 10. cria o projeto e salva a receita
 const saved = await panel.evaluate(
-  async ([tk, recipe]) => {
+  async ([tk, recipe, base]) => {
     const headers = { "Content-Type": "application/json", "X-Griver-Token": tk }
-    const projectRes = await fetch("http://127.0.0.1:7331/api/projects", {
+    const projectRes = await fetch(`${base}/api/projects`, {
       method: "POST",
       headers,
       body: JSON.stringify({ name: "Teste e2e" }),
     })
     const project = (await projectRes.json()).project
-    const recipeRes = await fetch("http://127.0.0.1:7331/api/recipes", {
+    const recipeRes = await fetch(`${base}/api/recipes`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -154,7 +154,7 @@ const saved = await panel.evaluate(
     })
     return { project: project.id, recipe: await recipeRes.json() }
   },
-  [token, stopped.recipe],
+  [token, stopped.recipe, serverUrl],
 )
 console.log("10. salvo:", JSON.stringify(saved).slice(0, 300))
 
@@ -172,29 +172,29 @@ console.log("11. execução disparada:", executed)
 await page.waitForTimeout(3000)
 
 // 12. o resultado da execução aparece no servidor
-const runInfo = await panel.evaluate(async ([tk, recipeId]) => {
+const runInfo = await panel.evaluate(async ([tk, recipeId, base]) => {
   const headers = { "Content-Type": "application/json", "X-Griver-Token": tk }
-  const res = await fetch("http://127.0.0.1:7331/api/runs", {
+  const res = await fetch(`${base}/api/runs`, {
     method: "POST",
     headers,
     body: JSON.stringify({ recipeId, driver: "tab" }),
   })
   const { runId } = await res.json()
   await new Promise((r) => setTimeout(r, 2500))
-  const runRes = await fetch(`http://127.0.0.1:7331/api/runs/${runId}`, { headers })
+  const runRes = await fetch(`${base}/api/runs/${runId}`, { headers })
   return await runRes.json()
-}, [token, saved.recipe.recipe.id])
+}, [token, saved.recipe.recipe.id, serverUrl])
 console.log("12. resultado:", JSON.stringify(runInfo).slice(0, 800))
 
 // limpeza: o teste não deixa projeto nem receita na base do usuário
 await panel.evaluate(
-  async ([tk, projectId]) => {
-    await fetch(`http://127.0.0.1:7331/api/projects/${projectId}`, {
+  async ([tk, projectId, base]) => {
+    await fetch(`${base}/api/projects/${projectId}`, {
       method: "DELETE",
       headers: { "X-Griver-Token": tk },
     })
   },
-  [token, saved.project],
+  [token, saved.project, serverUrl],
 )
 
 await context.close()
