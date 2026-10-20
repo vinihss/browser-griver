@@ -11,7 +11,7 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, opcoesDoNavegador, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
@@ -20,7 +20,7 @@ const targetUrl = process.argv[3] ?? "file:///tmp/opencode/teste.html"
 const userDataDir = mkdtempSync(join(tmpdir(), "griver-panel-"))
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  headless: false,
+  ...opcoesDoNavegador(),
   viewport: { width: 1280, height: 900 },
   args: [
     `--disable-extensions-except=${extensionPath}`,
@@ -91,7 +91,33 @@ const projeto = await panel.evaluate(async ([tk, base]) => {
 }, [token, serverUrl])
 console.log("3. projeto criado:", projeto.id ? "sim" : "não")
 
-// ── 3. página alvo e gravação ──────────────────────────────────────────────
+// ── 3. a receita nasce antes da gravação ───────────────────────────────────
+// o botão de gravar só existe com uma receita aberta: é ela que recebe os
+// passos gravados. O modal pede só o nome — a URL vem da página.
+const nomeReceita = "Minha receita"
+await panel.evaluate(() => {
+  document
+    .querySelector(
+      '.panel-header button[title="Add New Script"], .panel-header button[aria-label="Add New Script"]',
+    )
+    ?.click()
+})
+await panel.waitForTimeout(600)
+await panel.evaluate((nome) => {
+  const input = document.querySelector(".modal")?.querySelector("input")
+  if (!input) return
+  input.value = nome
+  input.dispatchEvent(new Event("input", { bubbles: true }))
+}, nomeReceita)
+await panel.waitForTimeout(300)
+await panel.evaluate(() => {
+  Array.from(document.querySelectorAll(".modal button"))
+    .find((b) => b.textContent?.trim() === "Save")
+    ?.click()
+})
+await panel.waitForTimeout(1500)
+
+// ── 4. página alvo e gravação ──────────────────────────────────────────────
 const page = await context.newPage()
 await page.goto(targetUrl)
 await page.waitForTimeout(600)
@@ -157,6 +183,7 @@ const editor = await panel.evaluate(() => {
 console.log("8. editor no painel:", editor.ok ? "sim" : "NÃO", `(${editor.passos} passos)`)
 
 // ── 6. editar o JSON e salvar ──────────────────────────────────────────────
+// a receita já existe e está aberta: "Salvar" grava nela, sem modal
 const editou = await panel.evaluate(async () => {
   const editor = document.querySelector("textarea.code")
   if (!editor) return { ok: false, motivo: "sem editor" }
@@ -165,7 +192,6 @@ const editou = await panel.evaluate(async () => {
   editor.value = JSON.stringify(receita, null, 2)
   editor.dispatchEvent(new Event("input", { bubbles: true }))
   await new Promise((r) => setTimeout(r, 100))
-  // "Salvar" num rascunho abre o modal Add New Script
   Array.from(document.querySelectorAll("button"))
     .find((b) => b.textContent?.trim() === "Salvar")
     ?.click()
@@ -174,18 +200,6 @@ const editou = await panel.evaluate(async () => {
 })
 console.log("9. edição + modal:", JSON.stringify(editou))
 
-const nomeReceita = "Minha receita"
-await panel.evaluate((nome) => {
-  const campos = document.querySelectorAll(".modal input")
-  const nameInput = campos[0]
-  if (nameInput) {
-    nameInput.value = nome
-    nameInput.dispatchEvent(new Event("input", { bubbles: true }))
-  }
-  Array.from(document.querySelectorAll(".modal button"))
-    .find((b) => b.textContent?.trim() === "Save")
-    ?.click()
-}, nomeReceita)
 await panel.waitForTimeout(1500)
 
 const avisoFinal = await panel.evaluate(() => document.querySelector(".notice")?.textContent?.trim())

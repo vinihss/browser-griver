@@ -11,7 +11,7 @@ import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, opcoesDoNavegador, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
@@ -35,7 +35,7 @@ writeFileSync(
 )
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  headless: false,
+  ...opcoesDoNavegador(),
   viewport: { width: 1280, height: 900 },
   args: [
     `--disable-extensions-except=${extensionPath}`,
@@ -85,6 +85,32 @@ await panel.evaluate(() => {
   document.querySelector('.panel-header button[title="Receitas"]')?.click()
 })
 await panel.waitForTimeout(500)
+
+// o botão de gravar só existe com uma receita aberta — é ela que recebe os
+// passos gravados. Sem receita, não há gravação.
+await panel.evaluate(() => {
+  document
+    .querySelector(
+      '.panel-header button[title="Add New Script"], .panel-header button[aria-label="Add New Script"]',
+    )
+    ?.click()
+})
+await panel.waitForTimeout(600)
+await panel.evaluate((nome) => {
+  const input = document.querySelector(".modal")?.querySelector("input")
+  if (!input) return
+  input.value = nome
+  input.dispatchEvent(new Event("input", { bubbles: true }))
+}, `Overlay ${Date.now()}`)
+await panel.waitForTimeout(300)
+await panel.evaluate(() => {
+  const botao = Array.from(document.querySelectorAll(".modal button")).find(
+    (b) => b.textContent?.trim() === "Save",
+  )
+  botao?.click()
+})
+await panel.waitForTimeout(1500)
+
 await page.bringToFront()
 await panel.evaluate(() => {
   const botao = Array.from(document.querySelectorAll("button")).find(

@@ -1,3 +1,5 @@
+import { opcoesDoNavegador } from "./helpers.mjs"
+
 import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -12,7 +14,7 @@ let token = process.argv[4] ?? ""
 const userDataDir = mkdtempSync(join(tmpdir(), "griver-chrome-"))
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  headless: false,
+  ...opcoesDoNavegador(),
   viewport: { width: 1280, height: 900 },
   args: [
     `--disable-extensions-except=${extensionPath}`,

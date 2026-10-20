@@ -1,3 +1,5 @@
+import { opcoesDoNavegador } from "./helpers.mjs"
+
 import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -7,8 +9,7 @@ const extensionPath = resolve("packages/extension/dist")
 const userDataDir = mkdtempSync(join(tmpdir(), "griver-chrome-"))
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  // o Chrome de marca ignora --load-extension; o Chromium aceita
-  headless: false,
+  ...opcoesDoNavegador(),
   args: [
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,

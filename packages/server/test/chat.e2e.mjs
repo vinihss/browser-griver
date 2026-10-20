@@ -3,6 +3,10 @@
  *
  * Sobe o servidor, cria uma receita e pede ao assistente para alterá-la,
  * conferindo se a ferramenta `griver_recipe_patch` foi realmente usada.
+ *
+ * O nome vem do servidor MCP: o OpenCode nomeia a ferramenta do servidor
+ * `griver` com o prefixo dele, e a ferramenta do MCP se chama
+ * `recipe_patch` — o nome completo é `griver_recipe_patch`.
  */
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -10,9 +14,9 @@ import { join, resolve } from "node:path"
 import { startServer } from "../dist/index.js"
 
 /**
- * O plugin do OpenCode lê o token em `<projeto>/data/token` e fala com
- * `http://127.0.0.1:7331` — por isso o teste usa a pasta de dados e a porta
- * reais do projeto, e não uma temporária.
+ * O assistente conversa com o servidor local pela porta real do projeto, e o
+ * token vive em `<projeto>/data/token` — por isso o teste usa a pasta de dados
+ * e a porta reais do projeto, e não uma temporária.
  */
 const dataDir = resolve("data")
 const port = 7331

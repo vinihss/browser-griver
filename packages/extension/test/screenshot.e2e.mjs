@@ -15,14 +15,14 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar, opcoesDoNavegador, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
 const targetUrl = process.argv[3] ?? "file:///tmp/opencode/teste.html"
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-print-")), {
-  headless: false,
+  ...opcoesDoNavegador(),
   viewport: { width: 1280, height: 900 },
   args: [
     `--disable-extensions-except=${extensionPath}`,

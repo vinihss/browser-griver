@@ -7,7 +7,7 @@ import { createServer } from "node:http"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, achaAba, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, achaAba, fecharAoFalhar, opcoesDoNavegador } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 
@@ -20,7 +20,7 @@ await new Promise((resolve_) => server.listen(0, "::1", () => resolve_()))
 const { port } = server.address()
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-nav-")), {
-  headless: false,
+  ...opcoesDoNavegador(),
   args: [
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,

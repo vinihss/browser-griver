@@ -1,8 +1,9 @@
 /**
  * Teste do fluxo completo do modal "Add New Script".
  *
- * Grava uma receita, para, abre o modal pelo `+` do painel, preenche Name e
- * URL e confere se a receita chega ao servidor com o `startUrl` certo.
+ * Grava uma receita, para, abre o modal pelo `+` do painel, preenche só o
+ * Name e confere se a receita chega ao servidor com o `startUrl` da página
+ * em que o teste está — não há campo de URL no modal.
  *
  * Uso: node packages/extension/test/modal.e2e.mjs <serverUrl>
  */
@@ -10,7 +11,7 @@ import { chromium } from "playwright"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, conectar, fecharAoFalhar, opcoesDoNavegador, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
@@ -24,7 +25,7 @@ writeFileSync(
 )
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  headless: false,
+  ...opcoesDoNavegador(),
   viewport: { width: 1280, height: 900 },
   args: [
     `--disable-extensions-except=${extensionPath}`,
@@ -33,6 +34,10 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     "--no-default-browser-check",
   ],
 })
+
+// a URL da página em que o teste está: é ela que a receita guarda como
+// `startUrl`, já que o modal não tem mais campo de URL
+const urlEsperada = `file://${pagina}`
 
 fecharAoFalhar(context)
 
@@ -114,13 +119,11 @@ const preencheu = await panel.evaluate((nome) => {
   const el = document.querySelector(".modal")
   if (!el) return false
   const campos = el.querySelectorAll("input")
+  // só o nome: a URL da página é a fonte do `startUrl`
+  if (campos.length !== 1) return false
   const nameInput = campos[0]
-  const urlInput = campos[1]
-  if (!nameInput || !urlInput) return false
   nameInput.value = nome
   nameInput.dispatchEvent(new Event("input", { bubbles: true }))
-  urlInput.value = "https://exemplo.com/pagina"
-  urlInput.dispatchEvent(new Event("input", { bubbles: true }))
   return true
 }, nome)
 console.log("3. campos preenchidos:", preencheu ? "sim" : "NÃO")
@@ -165,8 +168,7 @@ const checada = await panel.evaluate(async ([tk, alvo, base]) => {
 
 console.log("4. receita no servidor:", checada.ok ? "sim" : `NÃO (${checada.motivo})`)
 console.log("5. startUrl:", checada.startUrl)
-console.log("6. passos:", checada.passos)
-// ── a lista do painel mostra a receita nova? ────────────────────────────────
+console.log("6. passos:", checada.passos)// ── a lista do painel mostra a receita nova? ────────────────────────────────
 const naLista = await panel.evaluate(
   (alvo) =>
     Array.from(document.querySelectorAll(".recipe-row .truncate")).some(
@@ -196,7 +198,7 @@ await context.close()
 const ok =
   modal.ok &&
   checada.ok &&
-  checada.startUrl === "https://exemplo.com/pagina" &&
+  checada.startUrl === urlEsperada &&
   naLista &&
   erros.length === 0
 console.log(ok ? "\n✓ modal ok" : "\n✗ modal com problemas")

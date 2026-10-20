@@ -17,7 +17,7 @@ import { mkdtempSync } from "node:fs"
 import { createServer, request as httpRequest } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
+import { EXTENSION_PATH, fecharAoFalhar, opcoesDoNavegador, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
@@ -96,7 +96,7 @@ proxy.on("upgrade", (req, socket, head) => {
 })
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-token-")), {
-  headless: false,
+  ...opcoesDoNavegador(),
   viewport: { width: 1280, height: 900 },
   args: [
     `--disable-extensions-except=${extensionPath}`,

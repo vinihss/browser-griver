@@ -55,6 +55,8 @@ const TESTES = [
   // permissão de host: base da gravação por extensão e da execução na aba
   "inject-host",
   "navegar-host",
+  // o preenchimento logo depois da navegação não pode se perder
+  "navegar-fill",
 ]
 
 /** Tempo máximo de um teste antes de ser considerado travado. */
@@ -192,16 +194,101 @@ function limparChrome() {
     }
 
     try {
-      // mata o grupo inteiro: o navegador e os filhos dele
-      execSync(`kill -9 -- -${pid} 2>/dev/null || kill -9 ${pid} 2>/dev/null`, {
-        stdio: "ignore",
-      })
-      mortos++
+      // mata o navegador e os filhos dele: o PID pode ter sido reciclado,
+      // e matar o grupo errado derruba a suíte e o shell de quem a started
+      if (mataProcesso(pid)) mortos++
     } catch {
       // já morreu
     }
   }
   return mortos
+}
+
+/**
+ * O grupo de processos de um PID.
+ *
+ * O Node não expõe o pgid: o `ps` é a fonte. PID morto não tem grupo.
+ */
+function grupoDe(pid) {
+  try {
+    const saida = execSync(`ps -o pgid= -p ${pid} 2>/dev/null`, { encoding: "utf8" }).trim()
+    const pgid = Number(saida)
+    return Number.isFinite(pgid) && pgid > 0 ? pgid : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Os filhos de um processo.
+ *
+ * O Chrome deixa os renderers pendurados quando o processo principal cai:
+ * eles são filhos diretos, e é preciso derrubá-los também.
+ */
+function filhosDe(pid) {
+  let lista
+  try {
+    lista = execSync("ps -eo pid,ppid --no-headers", { encoding: "utf8" })
+      .split("\n")
+      .map((linha) => linha.trim())
+      .filter(Boolean)
+      .map((linha) => linha.split(/\s+/).map(Number))
+      .filter(([filho, pai]) => filho > 0 && pai === pid)
+      .map(([filho]) => filho)
+  } catch {
+    return []
+  }
+  return lista
+}
+
+/**
+ * Mata um processo sem matar o grupo errado.
+ *
+ * `kill -- -PID` mata o grupo cujo ID é o PID. Quando o processo já morreu,
+ * o PID é reciclado e esse ID passa a apontar para outro grupo — o de um
+ * shell, por exemplo. A suíte morria junto, levava o shell junto e o
+ * sintoma era um "Killed by SIGKILL" sem nenhuma pista.
+ *
+ * Por isso o grupo só cai quando o PID ainda é o líder dele, e o grupo de
+ * quem está chamando nunca é tocado.
+ */
+function mataProcesso(pid) {
+  if (!pid || pid === process.pid) return false
+
+  const pgid = grupoDe(pid)
+  // o processo já morreu: o PID pode ter sido reciclado
+  if (pgid === undefined) return false
+
+  // o meu próprio grupo nunca cai: quem chama está dentro dele
+  if (pgid === grupoDe(process.pid)) return false
+
+  // só o líder do grupo leva o grupo junto
+  if (pgid !== pid) {
+    for (const filho of filhosDe(pid)) {
+      try {
+        process.kill(filho, "SIGKILL")
+      } catch {
+        // já morreu
+      }
+    }
+    try {
+      process.kill(pid, "SIGKILL")
+    } catch {
+      // já morreu
+    }
+    return true
+  }
+
+  try {
+    process.kill(-pgid, "SIGKILL")
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL")
+    } catch {
+      // já morreu
+    }
+  }
+  return true
 }
 
 /**
@@ -211,16 +298,8 @@ function limparChrome() {
  * inteiro cai junto — inclusive o Chrome órfão que o teste deixou.
  */
 function matarGrupo(proc) {
-  if (!proc.pid) return
-  try {
-    process.kill(-proc.pid, "SIGKILL")
-  } catch {
-    try {
-      process.kill(proc.pid, "SIGKILL")
-    } catch {
-      // já morreu
-    }
-  }
+  if (!proc?.pid) return
+  mataProcesso(proc.pid)
 }
 
 /**

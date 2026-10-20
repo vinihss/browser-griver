@@ -3,13 +3,13 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar, opcoesDoNavegador, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
 const serverUrl = servidorDoTeste(process.argv.slice(2))
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-erro-")), {
-  headless: false,
+  ...opcoesDoNavegador(),
   args: [
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,
@@ -43,11 +43,34 @@ await panel.evaluate(async () => {
 })
 await panel.waitForTimeout(1500)
 
-// com a aba do painel ativa, gravar é impossível: precisa avisar
+// uma receita aberta: é ela que dá origem ao botão de gravar
 await panel.evaluate(() => {
   document.querySelector('.panel-header button[title="Receitas"]')?.click()
 })
 await panel.waitForTimeout(400)
+await panel.evaluate(() => {
+  document
+    .querySelector(
+      '.panel-header button[title="Add New Script"], .panel-header button[aria-label="Add New Script"]',
+    )
+    ?.click()
+})
+await panel.waitForTimeout(600)
+await panel.evaluate((nome) => {
+  const input = document.querySelector(".modal")?.querySelector("input")
+  if (!input) return
+  input.value = nome
+  input.dispatchEvent(new Event("input", { bubbles: true }))
+}, `Erro ${Date.now()}`)
+await panel.waitForTimeout(300)
+await panel.evaluate(() => {
+  Array.from(document.querySelectorAll(".modal button"))
+    .find((b) => b.textContent?.trim() === "Save")
+    ?.click()
+})
+await panel.waitForTimeout(1500)
+
+// sem aba de página aberta, gravar é impossível: precisa avisar
 await panel.evaluate(() => {
   Array.from(document.querySelectorAll("button"))
     .find((b) => b.textContent?.trim() === "● Gravar")
@@ -59,4 +82,4 @@ const aviso = await panel.evaluate(() => document.querySelector(".notice")?.text
 console.log("aviso exibido:", JSON.stringify(aviso))
 
 await context.close()
-process.exit(aviso?.includes("não pode ser gravada") ? 0 : 1)
+process.exit(aviso?.includes("nenhuma aba de página") ? 0 : 1)

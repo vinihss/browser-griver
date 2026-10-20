@@ -31,22 +31,73 @@ export function servidorDoTeste(argumentos) {
 }
 
 /**
+ * Tem tela para o Chrome?
+ *
+ * No Linux, o Chrome de verdade (headed) precisa de um X server: sem
+ * `DISPLAY` ele morre na largada com "Missing X server or $DISPLAY".
+ */
+export function temTela() {
+  if (process.platform !== "linux") return true
+  return Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)
+}
+
+/**
+ * O e2e roda sem tela?
+ *
+ * O Playwright tem dois Chromium: o "headless shell", que é o padrão do
+ * `headless: true` e não carrega extensão nenhuma, e o Chromium completo,
+ * que roda a extensão MV3 em headless como qualquer outro.
+ *
+ * O `channel: "chromium"` é o que escolhe o binário completo. Sem ele, o
+ * service worker da extensão nunca aparece e o teste morre fingindo que a
+ * extensão não carregou.
+ *
+ * Headless é o padrão: o Chrome de verdade depende de um X server e
+ * morre sozinho quando o Xwayland engasga — o teste falha com "Target
+ * page, context or browser has been closed", sem dizer que o culpado é o
+ * navegador. `GRIVER_HEADLESS=0` pede o Chrome de verdade (e aí a tela
+ * é obrigatória).
+ */
+export const HEADLESS = process.env.GRIVER_HEADLESS !== "0"
+
+/**
+ * Opções do navegador dos e2e.
+ *
+ * `channel: "chromium"` é obrigatório: ele traz o Chromium completo, o
+ * único que carrega extensão MV3 em headless.
+ */
+export function opcoesDoNavegador(extra = {}) {
+  return {
+    headless: HEADLESS,
+    channel: "chromium",
+    ...extra,
+  }
+}
+
+/**
  * Falha cedo quando não há tela para o Chrome.
  *
- * Os e2e abrem um Chrome de verdade (headed). Sem `DISPLAY` no Linux, o
- * navegador morre na largada com "Missing X server or $DISPLAY" e a suíte
- * inteira falha com nove erros que não dizem nada sobre a causa — o
- * problema não é o código, é a tela que sumiu (login novo, sessão sem
- * Wayland, `sudo` sem o display do usuário).
+ * Antes isso era um beco sem saída: sem `DISPLAY` no Linux, o navegador
+ * morre na largada com "Missing X server or $DISPLAY" e a suíte inteira
+ * falha com nove erros que não dizem nada sobre a causa — o problema não
+ * é o código, é a tela que sumiu (login novo, sessão sem Wayland, `sudo`
+ * sem o display do usuário).
+ *
+ * Agora a tela que falta vira headless. O erro só sobra quando alguém
+ * pediu o Chrome de verdade (`GRIVER_HEADLESS=0`) e a tela não existe.
  */
 export function exigeDisplay() {
-  if (process.platform !== "linux") return
-  if (process.env.DISPLAY || process.env.WAYLAND_DISPLAY) return
+  if (temTela()) return
+  if (HEADLESS) {
+    console.log("sem tela: os e2e rodam headless (GRIVER_HEADLESS=0 pede o Chrome de verdade)")
+    return
+  }
 
   console.error(
     "os testes e2e precisam de uma tela: o Chrome de verdade não abre sem ela.\n" +
       "  export DISPLAY=:1   (o Xwayland do seu login)\n" +
-      "  ou rode com xvfb-run: xvfb-run -a node packages/extension/test/e2e-all.mjs",
+      "  ou rode com xvfb-run: xvfb-run -a node packages/extension/test/e2e-all.mjs\n" +
+      "  ou deixe o headless assumir: pnpm test:e2e:all",
   )
   process.exit(1)
 }
