@@ -20,6 +20,8 @@ export interface GatewayHandlers {
   onMessage?: (client: ClientConnection, message: ClientMessage) => void | Promise<void>
   onConnect?: (client: ClientConnection) => void
   onDisconnect?: (client: ClientConnection) => void
+  /** versão do servidor, confirmada no handshake (`hello.ok`) */
+  serverVersion?: string
 }
 
 /**
@@ -87,6 +89,13 @@ export class WsGateway {
       }
       client.authenticated = true
       client.info.version = message.clientVersion
+      // confirma o handshake: sem isso a extensão não sabe se o token
+      // aceito, e quem fala com o servidor pela API também não tem como
+      // saber que a extensão já está autenticada
+      this.send(client, {
+        type: "hello.ok",
+        serverVersion: this.handlers.serverVersion ?? "0.0.0",
+      })
       return
     }
 
@@ -113,6 +122,22 @@ export class WsGateway {
   send(client: ClientConnection, message: ServerMessage): void {
     if (client.socket.readyState !== client.socket.OPEN) return
     client.socket.send(encode(message))
+  }
+
+  /**
+   * Devolve a primeira extensão autenticada e conectada.
+   *
+   * É o alvo padrão de comandos que precisam de uma única aba — rodar uma
+   * receita na aba de uma extensão não pode ser entregue a todas, senão
+   * cada uma delas executa na sua aba ativa.
+   */
+  firstAuthenticatedClient(): ClientConnection | undefined {
+    for (const client of this.clients.values()) {
+      if (!client.authenticated) continue
+      if (client.socket.readyState !== client.socket.OPEN) continue
+      return client
+    }
+    return undefined
   }
 
   /** Envia uma mensagem para todas as extensões conectadas. */

@@ -37,6 +37,7 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
   // o despachante é atribuído depois que as dependências existem
   let dispatch: (client: ClientConnection, message: ClientMessage) => Promise<void> = async () => {}
   const wsGateway = new WsGateway(server, config.token, {
+    serverVersion: SERVER_VERSION,
     onMessage: (client, message) => dispatch(client, message),
   })
 
@@ -94,11 +95,14 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
 
   // ── mensagens da extensão ────────────────────────────────────────────────
 
-  dispatch = async (_client, message: ClientMessage) => {
-    await handleExtensionMessage(message)
+  dispatch = async (client, message: ClientMessage) => {
+    await handleExtensionMessage(client, message)
   }
 
-  async function handleExtensionMessage(message: ClientMessage): Promise<void> {
+  async function handleExtensionMessage(
+    client: ClientConnection,
+    message: ClientMessage,
+  ): Promise<void> {
     switch (message.type) {
       case "project.list":
         wsGateway.broadcast({ type: "projects", projects: repo.listProjects() })
@@ -213,7 +217,7 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
         break
       }
       case "run.start": {
-        await startRunFromExtension(message.recipeId, message.driver ?? "tab", message.vars)
+        await startRunFromExtension(client, message.recipeId, message.driver ?? "tab", message.vars)
         break
       }
       case "run.cancel": {
@@ -275,6 +279,7 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
   }
 
   async function startRunFromExtension(
+    client: ClientConnection,
     recipeId: string,
     driver: string,
     vars?: Record<string, unknown>,
@@ -291,7 +296,15 @@ export async function startServer(overrides: Partial<ServerConfig> = {}): Promis
     wsGateway.broadcast({ type: "run.started", run })
 
     if (driver === "tab") {
-      const result = await tabRuns.requestRun(run.id, found.summary.id, found.body, vars)
+      // a execução vai para a extensão que pediu: é a aba dela que deve
+      // rodar a receita, não a de qualquer outra extensão conectada
+      const result = await tabRuns.requestRun(
+        run.id,
+        found.summary.id,
+        found.body,
+        vars,
+        client,
+      )
       wsGateway.broadcast({ type: "run.finished", run: repo.getRun(run.id)! })
       void result
       return

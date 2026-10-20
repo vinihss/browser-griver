@@ -1,6 +1,6 @@
 import type { Recipe, RunResult, StepEvent } from "@griver/core"
 import type { Repository } from "../db/repo.js"
-import type { WsGateway } from "../ws/gateway.js"
+import type { WsGateway, ClientConnection } from "../ws/gateway.js"
 
 interface PendingRun {
   resolve: (result: RunResult) => void
@@ -21,14 +21,41 @@ export class TabRunCoordinator {
     private readonly repo: Repository,
   ) {}
 
-  /** Pede à extensão que execute a receita na aba ativa. */
+  /**
+   * Pede à extensão que execute a receita na aba ativa.
+   *
+   * O comando vai para uma única extensão: quem pediu a execução, quando
+   * vem do próprio WebSocket, ou a primeira conectada quando a execução
+   * partiu de uma chamada HTTP. Enviar para todas faria cada extensão
+   * executar a receita na sua aba ativa — sequestrando abas de outros
+   * navegadores.
+   */
   async requestRun(
     runId: string,
     recipeId: string,
     recipe: Recipe,
     vars?: Record<string, unknown>,
+    target?: ClientConnection,
     timeoutMs = 120_000,
   ): Promise<RunResult> {
+    const client = target ?? this.gateway.firstAuthenticatedClient()
+    if (!client) {
+      const result: RunResult = {
+        status: "error",
+        scope: {},
+        error: { message: "nenhuma extensão conectada" },
+        steps: [],
+      }
+      this.repo.updateRun(runId, {
+        status: "error",
+        endedAt: Date.now(),
+        error: result.error?.message,
+        scope: {},
+        log: [],
+      })
+      return result
+    }
+
     const result = await new Promise<RunResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(runId)
@@ -41,7 +68,7 @@ export class TabRunCoordinator {
       }, timeoutMs)
 
       this.pending.set(runId, { resolve, timer })
-      this.gateway.broadcast({
+      this.gateway.send(client, {
         type: "run.request",
         runId,
         recipeId,

@@ -124,7 +124,9 @@ export type ServerMessage =
   | {
       type: "hello.ok"
       serverVersion: string
-      opencode: { available: boolean; models?: { providerID: string; id: string; name: string }[] }
+      // opcional: o servidor confirma o handshake antes de saber se o
+      // OpenCode local está no ar
+      opencode?: { available: boolean; models?: { providerID: string; id: string; name: string }[] }
     }
   | { type: "error"; id?: string; message: string }
   | { type: "pong" }
