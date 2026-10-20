@@ -1,4 +1,5 @@
 import type { Condition, Recipe, Step } from "../recipe/schema.js"
+import { userAgentDe } from "../runtime/browser.js"
 import { interpolate } from "../runtime/vars.js"
 
 /**
@@ -23,9 +24,37 @@ export function compileToPlaywright(recipe: Recipe, options: { headed?: boolean;
   lines.push(`  throw new Error(\`nenhum seletor casou: \${selectors.join(", ")}\`)`)
   lines.push(`}`)
   lines.push(``)
+  lines.push(`/** Repete a busca ate o elemento aparecer (ou sumir) dentro do limite. */`)
+  lines.push(`async function waitForEl(page: any, selectors: string[], state: string, timeout: number): Promise<void> {`)
+  lines.push(`  const deadline = Date.now() + timeout`)
+  lines.push(`  let ultimoErro = ""`)
+  lines.push(`  for (;;) {`)
+  lines.push(`    for (const selector of selectors) {`)
+  lines.push(`      const locator = page.locator(selector).first()`)
+  lines.push(`      if (await locator.count()) {`)
+  lines.push(`        try {`)
+  lines.push(`          await locator.waitFor({ state, timeout: Math.max(1, deadline - Date.now()) })`)
+  lines.push(`          return`)
+  lines.push(`        } catch (error) {`)
+  lines.push(`          ultimoErro = String(error)`)
+  lines.push(`        }`)
+  lines.push(`      }`)
+  lines.push(`    }`)
+  lines.push(`    if (Date.now() >= deadline) {`)
+  lines.push(`      throw new Error(\`elemento nao ficou "\${state}" em \${timeout}ms\`)`)
+  lines.push(`    }`)
+  lines.push(`    await page.waitForTimeout(150)`)
+  lines.push(`  }`)
+  lines.push(`}`)
+  lines.push(``)
   lines.push(`async function main() {`)
-  lines.push(`  const browser = await chromium.launch({ headless: ${options.headed ? "false" : "true"} })`)
-  lines.push(`  const context = await browser.newContext()`)
+  lines.push(
+    `  const browser = await chromium.launch({ headless: ${options.headed ? "false" : "true"} })`,
+  )
+  const userAgent = userAgentDe(options.headed)
+  lines.push(
+    `  const context = await browser.newContext(${userAgent ? `{ userAgent: ${JSON.stringify(userAgent)} }` : "{}"})`,
+  )
   lines.push(`  const page = await context.newPage()`)
   lines.push(``)
 
@@ -101,7 +130,9 @@ function emitStep(lines: string[], step: Step, indent: string, scope: Set<string
       break
     case "waitFor": {
       const state = step.state ?? "visible"
-      lines.push(`${indent}await (await pick(page, ${JSON.stringify(step.target.selectors)})).waitFor({ state: ${JSON.stringify(state)}, timeout: ${step.timeout ?? 30000} })`)
+      lines.push(
+        `${indent}await waitForEl(page, ${JSON.stringify(step.target.selectors)}, ${JSON.stringify(state)}, ${step.timeout ?? 30000})`,
+      )
       break
     }
     case "extract": {

@@ -67,6 +67,38 @@ export function toBoolean(value: unknown): boolean {
   return Boolean(value)
 }
 
+/**
+ * Monta uma expressão regular a partir de um padrão escrito por gente.
+ *
+ * O padrão aceita flags no começo — `(?i)plano\s+pro` — que o JavaScript
+ * só aceita na forma `new RegExp(padrao, flags)`. Sem esta tradução o
+ * padrão estoura em "Invalid group" e derruba a execução inteira.
+ *
+ * Devolve `null` quando o padrão não compila, para quem chama decidir
+ * entre falhar com uma mensagem clara e tratar como "não casou".
+ */
+export function buildRegExp(pattern: string): RegExp | null {
+  let body = pattern
+  let flags = ""
+
+  const inline = /^\(\?([a-zA-Z]+)\)/.exec(body)
+  if (inline) {
+    for (const flag of inline[1] ?? "") {
+      // `g` e `y` mudam o estado do regex entre usos: servem para listar
+      // ocorrências, não para testar um texto
+      if (!"ims".includes(flag)) return null
+      flags += flag
+    }
+    body = body.slice(inline[0].length)
+  }
+
+  try {
+    return new RegExp(body, flags)
+  } catch {
+    return null
+  }
+}
+
 export function compare(left: unknown, op: CompareOp, right: unknown): boolean {
   switch (op) {
     case "==":
@@ -75,12 +107,10 @@ export function compare(left: unknown, op: CompareOp, right: unknown): boolean {
       return !looseEquals(left, right)
     case "contains":
       return stringify(left).includes(stringify(right))
-    case "matches":
-      try {
-        return new RegExp(stringify(right)).test(stringify(left))
-      } catch {
-        return false
-      }
+    case "matches": {
+      const regex = buildRegExp(stringify(right))
+      return regex ? regex.test(stringify(left)) : false
+    }
     case ">":
     case ">=":
     case "<":
