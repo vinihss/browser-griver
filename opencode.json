@@ -15,8 +15,11 @@
     "servers": {
       "griver": {
         "type": "local",
-        "cwd": "packages/server",
-        "command": ["node", "dist/mcp/main.js"],
+        "command": [
+          "sh",
+          "-c",
+          "d=$PWD; while [ \"$d\" != \"/\" ]; do [ -f \"$d/packages/server/dist/mcp/main.js\" ] && exec node \"$d/packages/server/dist/mcp/main.js\"; d=$(dirname \"$d\"); done; echo 'griver: servidor MCP nao encontrado acima de '\"$PWD\" >&2; exit 1"
+        ],
         "environment": {
           "GRIVER_SERVER_URL": "http://127.0.0.1:7331"
         }
