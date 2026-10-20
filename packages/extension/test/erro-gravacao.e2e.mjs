@@ -3,10 +3,10 @@ import { chromium } from "playwright"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar } from "./helpers.mjs"
+import { EXTENSION_PATH, apontaParaServidor, fecharAoFalhar, servidorDoTeste } from "./helpers.mjs"
 
 const extensionPath = EXTENSION_PATH
-const serverUrl = process.argv[2] ?? "http://127.0.0.1:7331"
+const serverUrl = servidorDoTeste(process.argv.slice(2))
 
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), "griver-erro-")), {
   headless: false,
