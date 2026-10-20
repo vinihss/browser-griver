@@ -20,6 +20,8 @@ export class TabDriver implements Driver {
   constructor(private readonly tabId: number) {}
 
   async navigate(url: string): Promise<void> {
+    // o documento que está na aba agora: é o que a navegação vai substituir
+    const documentoAntes = await this.documentoAtual()
     try {
       await chrome.tabs.update(this.tabId, { url })
     } catch {
@@ -36,7 +38,7 @@ export class TabDriver implements Driver {
         // a própria navegação derruba o content script; seguir para o load
       }
     }
-    await waitForLoad(this.tabId)
+    await waitForLoad(this.tabId, 30_000, documentoAntes)
   }
 
   async click(target: TargetRef, options?: { clickCount?: number; force?: boolean }): Promise<void> {
@@ -93,14 +95,70 @@ export class TabDriver implements Driver {
   }
 
   async screenshot(): Promise<ScreenshotResult> {
-    const dataUrl = await chrome.tabs.captureVisibleTab(this.tabId)
+    // `captureVisibleTab` recebe o id da JANELA, não o da aba — passar o id da
+    // aba faz o Chrome recusar com "No window with id".
+    const janela = await this.janelaDaAba()
+    // a captura sai da aba ativa da janela: garante que seja a aba controlada
+    try {
+      await chrome.tabs.update(this.tabId, { active: true })
+    } catch {
+      // sem permissão para ativar a aba: a captura sai da aba visível da janela
+    }
+    const dataUrl = await this.capturar(janela)
     const base64 = dataUrl.split(",")[1]
     return { base64, mimeType: "image/png" }
+  }
+
+  /**
+   * Captura a aba visível.
+   *
+   * O Chrome recusa a captura com o id da janela em alguns contextos (aba em
+   * headless, janela que não está em foco): "No window with id". Nesses casos
+   * a captura sem argumento usa a aba visível da janela e funciona.
+   */
+  private async capturar(janela: number | undefined): Promise<string> {
+    if (janela !== undefined) {
+      try {
+        return await chrome.tabs.captureVisibleTab(janela)
+      } catch {
+        // o id da janela não valeu: tenta a aba visível
+      }
+    }
+    return await chrome.tabs.captureVisibleTab()
+  }
+
+  /** Id da janela que contém a aba controlada (`undefined` se não souber). */
+  private async janelaDaAba(): Promise<number | undefined> {
+    try {
+      const aba = await chrome.tabs.get(this.tabId)
+      return aba.windowId
+    } catch {
+      return undefined
+    }
   }
 
   async currentUrl(): Promise<string> {
     const tab = await chrome.tabs.get(this.tabId)
     return tab.url ?? ""
+  }
+
+  /**
+   * Identidade do documento que está na aba agora.
+   *
+   * `undefined` quando não há content script na página — aí não há documento
+   * com o que comparar.
+   */
+  private async documentoAtual(): Promise<string | undefined> {
+    try {
+      const resposta = (await chrome.tabs.sendMessage(this.tabId, {
+        type: INTERNAL.pageCommand,
+        command: { action: "context" },
+      })) as { ok?: boolean; result?: { documento?: string } } | undefined
+      if (!resposta?.ok) return undefined
+      return resposta.result?.documento
+    } catch {
+      return undefined
+    }
   }
 
   async close(): Promise<void> {
@@ -163,12 +221,42 @@ export async function injectRecorder(tabId: number): Promise<void> {
  * A checagem imediata de `status === "complete"` resolve com a página antiga:
  * depois de pedir a navegação, a aba ainda está completa por um instante. Por
  * isso esperamos um pouco antes de começar a observar.
+ *
+ * Quando o documento antigo é conhecido, a espera é mais firme: o passo
+ * seguinte só roda depois que o content script do documento novo responder.
+ * Sem isso, um `fill` logo depois de `navigate` pode escrever no documento
+ * que está saindo — e o valor se perde com a navegação.
  */
-export async function waitForLoad(tabId: number, timeoutMs = 30_000): Promise<void> {
+export async function waitForLoad(
+  tabId: number,
+  timeoutMs = 30_000,
+  documentoAntes?: string,
+): Promise<void> {
   const inicio = Date.now()
-  await new Promise((resolve) => setTimeout(resolve, 200))
+  const restante = () => timeoutMs - (Date.now() - inicio)
 
-  while (Date.now() - inicio < timeoutMs) {
+  // o documento novo: o content script dele responde com um id diferente
+  let documentoNovo = false
+  if (documentoAntes !== undefined) {
+    const limite = Math.min(restante(), 15_000)
+    while (Date.now() - inicio < limite) {
+      const atual = await documentoDaAba(tabId)
+      if (atual !== undefined && atual !== documentoAntes) {
+        documentoNovo = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120))
+    }
+  }
+
+  // sem documento para comparar, a aba pode estar "completa" e ainda ser a
+  // antiga: a navegação só foi pedida. Uma pausa curta evita resolver com a
+  // página que está saindo.
+  if (!documentoNovo) {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+
+  while (restante() > 0) {
     try {
       const tab = await chrome.tabs.get(tabId)
       if (tab.status === "complete") return
@@ -180,6 +268,21 @@ export async function waitForLoad(tabId: number, timeoutMs = 30_000): Promise<vo
   }
 
   throw new Error("tempo esgotado aguardando o carregamento da página")
+}
+
+/** Identidade do documento que está na aba (undefined se não houver content script). */
+async function documentoDaAba(tabId: number): Promise<string | undefined> {
+  try {
+    const resposta = (await chrome.tabs.sendMessage(tabId, {
+      type: INTERNAL.pageCommand,
+      command: { action: "context" },
+    })) as { ok?: boolean; result?: { documento?: string } } | undefined
+    if (!resposta?.ok) return undefined
+    return resposta.result?.documento
+  } catch {
+    // a página está mudando: o content script antigo já foi
+    return undefined
+  }
 }
 
 function isDisconnected(error: unknown): boolean {

@@ -2,7 +2,7 @@ import { h, clear } from "./dom.js"
 import { state, patch, subscribe, setNotice, type TabId } from "./state.js"
 import { loadRecipes } from "./api.js"
 import { refreshProjects, settingsView } from "./views/projects.js"
-import { recipesView } from "./views/recipes.js"
+import { recipesView, addScriptModal } from "./views/recipes.js"
 import { chatView } from "./views/chat.js"
 import { sendToServer } from "./messaging.js"
 import type { Recipe, ServerMessage } from "@griver/core"
@@ -45,6 +45,12 @@ function render(): void {
   }
   root.appendChild(body)
 
+  // o modal é do painel, não de uma tela: o `+` do cabeçalho abre em
+  // qualquer uma delas
+  if (state.showAddScript) {
+    root.appendChild(addScriptModal())
+  }
+
   if (state.notice) {
     root.appendChild(
       h("div", { class: `notice notice-${state.notice.kind}` }, state.notice.text),
@@ -78,7 +84,7 @@ function panelHeader(): HTMLElement {
         class: "icon-btn",
         title: "Add New Script",
         "aria-label": "Add New Script",
-        onclick: () => patch({ showAddScript: true, addScriptUrl: "" }),
+        onclick: () => patch({ showAddScript: true }),
       },
       "+",
     ),
@@ -108,7 +114,7 @@ function panelHeader(): HTMLElement {
       h(
         "button",
         {
-          class: "icon-btn",
+          class: `icon-btn${state.tab === "ajustes" ? " active" : ""}`,
           title: "Ajustes",
           "aria-label": "Ajustes",
           onclick: () => void goTo("ajustes"),
@@ -176,22 +182,25 @@ function onRuntimeMessage(message: Record<string, unknown>): void {
     if (!recipe) return
     patch({
       tab: "receitas",
-      selectedRecipeId: "",
+      // a receita aberta continua aberta: a gravação preenche os passos
+      // dela, em vez de criar outra sem querer
       draftRecipe: recipe,
       recipeText: JSON.stringify(recipe, null, 2),
+      // conteúdo novo na mesma receita: o editor tem de reescrever o texto
+      recipeEpoch: state.recipeEpoch + 1,
       recipeDirty: true,
       recipeIssues: [],
     })
     return
   }
 
-  // o overlay pediu para salvar: abre o modal já com a URL da gravação
+  // o overlay pediu para salvar: o modal abre com a receita gravada
   if (message.type === "panel:openAddScript") {
-    const url = String(message.url ?? "")
+    const recipe = message.recipe as Recipe | undefined
     patch({
       tab: "receitas",
       showAddScript: true,
-      addScriptUrl: url,
+      draftRecipe: recipe,
     })
     return
   }

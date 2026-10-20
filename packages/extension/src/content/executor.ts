@@ -1,4 +1,4 @@
-import type { Expect, ExtractAttr, TargetRef } from "@griver/core"
+import { buildRegExp, type Expect, type ExtractAttr, type TargetRef } from "@griver/core"
 
 /**
  * Execução de passos dentro da aba.
@@ -221,9 +221,21 @@ export function extract(
   many: boolean,
 ): { value: unknown; count: number } {
   if (many) {
-    const elements = Array.from(document.querySelectorAll(target.selectors[0] ?? ""))
-    const values = elements.map((element) => readValue(element, attr))
-    return { value: values, count: values.length }
+    // os candidatos são alternativas: o primeiro que casa traz a lista
+    // inteira. Usar só o primeiro seletor perdia a lista quando o site
+    // mudava a classe e o segundo candidate era o que casava.
+    for (const selector of target.selectors) {
+      let elements: Element[] = []
+      try {
+        elements = Array.from(document.querySelectorAll(selector))
+      } catch {
+        continue
+      }
+      if (elements.length === 0) continue
+      const values = elements.map((element) => readValue(element, attr))
+      return { value: values, count: values.length }
+    }
+    return { value: [], count: 0 }
   }
   const { element } = resolveTarget(target)
   return { value: readValue(element, attr), count: 1 }
@@ -292,7 +304,11 @@ export function assert(target: TargetRef | undefined, expect: Expect, scope: Rec
     }
     case "matches": {
       const text = (element?.textContent ?? "").trim()
-      if (!new RegExp(expect.value ?? "").test(text)) {
+      const regex = buildRegExp(expect.value ?? "")
+      if (!regex) {
+        throw new PageError(`verificação falhou: expressão regular inválida "${expect.value ?? ""}"`)
+      }
+      if (!regex.test(text)) {
         throw new PageError(`verificação falhou: "${expect.value ?? ""}" não casa com "${text}"`)
       }
       return

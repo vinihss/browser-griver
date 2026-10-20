@@ -7,6 +7,16 @@ import { buildSelectorCandidates, visibleText } from "./selector.js"
 const recorder = new Recorder()
 const overlay = new RecordingOverlay()
 
+/**
+ * Identidade do documento.
+ *
+ * O content script roda uma vez por documento, então este id muda sempre que
+ * a página muda. Quem navega usa isso para esperar o documento novo: a aba
+ * pode estar "completa" e ainda ser a antiga — o passo seguinte cairia no
+ * documento que está saindo e o que o fill escreve nele se perderia.
+ */
+const DOCUMENTO = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
 interface RecordCommand {
   action: "start" | "pause" | "resume" | "stop"
 }
@@ -191,6 +201,7 @@ function pageContext(): Record<string, unknown> {
   return {
     url: location.href,
     title: document.title,
+    documento: DOCUMENTO,
     elements,
   }
 }

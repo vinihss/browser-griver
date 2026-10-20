@@ -33,6 +33,16 @@ export interface AppState {
   selectedRecipeId: string
   recipeText: string
   recipeDirty: boolean
+  /**
+   * Geração do conteúdo do editor.
+   *
+   * O editor é redesenhado a cada estado novo, mas o textarea só reescreve o
+   * valor quando a receita mudou — do contrário o cursor do usuário volta
+   * ao começo a cada tecla. Uma gravação que chega com passos novos é
+   * conteúdo novo na MESMA receita: sem esta contagem, o editor continuaria
+   * mostrando o texto antigo.
+   */
+  recipeEpoch: number
   recipeTarget: "browser" | "os"
   recipeIssues: { path: string; message: string; severity: string }[]
   recording: { active: boolean; paused: boolean; steps: number }
@@ -49,8 +59,6 @@ export interface AppState {
   busy: boolean
   /** modal "Add New Script" aberto */
   showAddScript: boolean
-  /** URL pré-preenchida no modal (vinda da gravação) */
-  addScriptUrl: string
   /**
    * Receita sendo editada sem estar salva no servidor.
    *
@@ -71,6 +79,7 @@ export const state: AppState = {
   selectedRecipeId: "",
   recipeText: "",
   recipeDirty: false,
+  recipeEpoch: 0,
   recipeTarget: "browser",
   recipeIssues: [],
   recording: { active: false, paused: false, steps: 0 },
@@ -85,7 +94,6 @@ export const state: AppState = {
   notice: undefined,
   busy: false,
   showAddScript: false,
-  addScriptUrl: "",
   draftRecipe: undefined,
 }
 

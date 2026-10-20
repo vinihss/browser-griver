@@ -9,6 +9,7 @@ import {
   loadRecipe,
   loadRecipes,
   updateRecipe,
+  urlCorrente,
   validateRecipe,
 } from "../api.js"
 import { safeParseRecipe, type Recipe } from "@griver/core"
@@ -25,11 +26,11 @@ let editorKey = ""
  * junto — sem guardar os valores, o que a pessoa digitou sumiria.
  */
 let addScriptName = ""
-let addScriptUrlInput = ""
 
 /** Identifica o que o editor está editando agora. */
 function currentEditorKey(): string {
-  return state.selectedRecipeId || (state.draftRecipe ? "rascunho" : "")
+  const alvo = state.selectedRecipeId || (state.draftRecipe ? "rascunho" : "")
+  return `${alvo}#${state.recipeEpoch}`
 }
 
 /**
@@ -45,14 +46,18 @@ export function recipesView(): HTMLElement {
       "div",
       { class: "row", style: "justify-content: space-between" },
       h("div", { class: "section-title" }, "Receitas"),
-      button(
-        "● Gravar",
-        () => {
-          void chrome.runtime.sendMessage({ type: "panel:record", action: "start" })
-          setNotice("Gravação iniciada. Interaja com a página.")
-        },
-        { variant: "primary", title: "Grava as ações na aba atual" },
-      ),
+      // gravar só faz sentido com uma receita aberta: os passos capturados
+      // precisam de um lugar para ir
+      state.selectedRecipeId || state.draftRecipe
+        ? button(
+            "● Gravar",
+            () => {
+              void chrome.runtime.sendMessage({ type: "panel:record", action: "start" })
+              setNotice("Gravação iniciada. Interaja com a página.")
+            },
+            { variant: "primary", title: "Grava as ações na aba atual" },
+          )
+        : null,
     ),
   )
   container.appendChild(recipeList())
@@ -61,10 +66,6 @@ export function recipesView(): HTMLElement {
   if (state.selectedRecipeId || state.draftRecipe) {
     container.appendChild(editor())
     container.appendChild(actions())
-  }
-
-  if (state.showAddScript) {
-    container.appendChild(addScriptModal())
   }
 
   return container
@@ -135,6 +136,7 @@ async function openRecipe(id: string): Promise<void> {
       selectedRecipeId: id,
       draftRecipe: undefined,
       recipeText: JSON.stringify(found.body, null, 2),
+      recipeEpoch: state.recipeEpoch + 1,
       recipeTarget: found.summary.target,
       recipeDirty: false,
       recipeIssues: [],
@@ -148,7 +150,6 @@ async function openRecipe(id: string): Promise<void> {
 async function runRecipe(id: string): Promise<void> {
   try {
     const found = await loadRecipe(id)
-    await updateRecipe(id, { recipe: found.body })
     sendToServer({ type: "run.start", recipeId: id, driver: "tab" })
     setNotice(`Executando "${found.summary.name}"…`)
   } catch (error) {
@@ -159,10 +160,11 @@ async function runRecipe(id: string): Promise<void> {
 /**
  * Modal "Add New Script".
  *
- * O URL vira o `startUrl` da receita — o campo existe no schema mas nunca era
- * preenchido pelo formulário antigo.
+ * Só o nome. A URL é a da página em que o usuário está: a receita começa de
+ * onde ele está, e não de um endereço digitado à mão — um endereço errado
+ * era a receita indo para um lugar que ninguém pediu.
  */
-function addScriptModal(): HTMLElement {
+export function addScriptModal(): HTMLElement {
   const nameInput = h("input", {
     class: "input",
     placeholder: "Nome do script",
@@ -172,25 +174,9 @@ function addScriptModal(): HTMLElement {
     },
   }) as HTMLInputElement
 
-  const urlInput = h("input", {
-    class: "input",
-    placeholder: "https://exemplo.com",
-    value: state.addScriptUrl || addScriptUrlInput,
-    oninput: (event: Event) => {
-      addScriptUrlInput = (event.target as HTMLInputElement).value
-    },
-  }) as HTMLInputElement
-
-  // a URL vinda da gravação é a fonte da verdade quando o modal abre
-  if (state.addScriptUrl && state.addScriptUrl !== addScriptUrlInput) {
-    addScriptUrlInput = state.addScriptUrl
-    urlInput.value = state.addScriptUrl
-  }
-
   const close = () => {
     addScriptName = ""
-    addScriptUrlInput = ""
-    patch({ showAddScript: false, addScriptUrl: "" })
+    patch({ showAddScript: false })
   }
   const save = async () => {
     const name = nameInput.value.trim()
@@ -198,7 +184,9 @@ function addScriptModal(): HTMLElement {
       setNotice("Dê um nome ao script.", "error")
       return
     }
-    const url = urlInput.value.trim()
+    // a URL corrente: a da gravação quando o modal veio dela, a da aba
+    // em que o usuário está nos demais casos
+    const url = state.draftRecipe?.startUrl ?? (await urlCorrente())
     // o rascunho da gravação traz os passos capturados; sem rascunho, a
     // receita começa vazia
     const base = state.draftRecipe ?? { version: 1 as const, steps: [] }
@@ -222,16 +210,15 @@ function addScriptModal(): HTMLElement {
       })
       const recipes = await loadRecipes()
       addScriptName = ""
-      addScriptUrlInput = ""
       patch({
         recipes,
         selectedRecipeId: created.id,
         draftRecipe: undefined,
         recipeText: JSON.stringify(recipe, null, 2),
+        recipeEpoch: state.recipeEpoch + 1,
         recipeDirty: false,
         recipeIssues: [],
         showAddScript: false,
-        addScriptUrl: "",
       })
       setNotice(`Receita "${name}" criada.`)
     } catch (error) {
@@ -252,7 +239,6 @@ function addScriptModal(): HTMLElement {
       { class: "modal" },
       h("div", { class: "modal-title" }, "Add New Script"),
       h("label", { class: "field" }, h("span", { class: "field-label" }, "Name"), nameInput),
-      h("label", { class: "field" }, h("span", { class: "field-label" }, "URL"), urlInput),
       h(
         "div",
         { class: "modal-actions" },
@@ -318,7 +304,11 @@ function editor(): HTMLElement {
 
 function actions(): HTMLElement {
   const row = h("div", { class: "row wrap" })
+  // um rascunho que ainda não está no servidor: só ele pede nome no modal
   const rascunho = state.draftRecipe !== undefined && !state.selectedRecipeId
+  // uma gravação esperando para ser salva em cima de uma receita que já
+  // existe: "Remover" descarta a gravação, não apaga a receita
+  const gravado = state.draftRecipe !== undefined && Boolean(state.selectedRecipeId)
 
   row.appendChild(
     button(
@@ -330,12 +320,11 @@ function actions(): HTMLElement {
           return
         }
         // o rascunho da gravação ainda não tem onde ser salvo: o modal pede
-        // o nome e a URL, e cria a receita a partir do que foi gravado
+        // só o nome e cria a receita a partir do que foi gravado
         if (rascunho) {
           patch({
             draftRecipe: parsed.data,
             showAddScript: true,
-            addScriptUrl: parsed.data.startUrl ?? state.addScriptUrl,
           })
           return
         }
@@ -428,10 +417,25 @@ function actions(): HTMLElement {
     button(
       "Remover",
       async () => {
-        // no rascunho, "remover" só descarta o rascunho
-        if (rascunho) {
-          patch({ draftRecipe: undefined, recipeText: "", recipeDirty: false })
-          setNotice("Rascunho descartado.")
+        // uma gravação ainda não salva: "Remover" descarta a gravação e
+        // devolve o texto que está no servidor — apagar a receita seria
+        // perder o que ela já tinha
+        if (rascunho || gravado) {
+          try {
+            const texto =
+              state.selectedRecipeId === ""
+                ? ""
+                : JSON.stringify((await loadRecipe(state.selectedRecipeId)).body, null, 2)
+            patch({
+              draftRecipe: undefined,
+              recipeText: texto,
+              recipeEpoch: state.recipeEpoch + 1,
+              recipeDirty: false,
+            })
+            setNotice(rascunho ? "Rascunho descartado." : "Gravação descartada.")
+          } catch (error) {
+            setNotice(describeError(error), "error")
+          }
           return
         }
         try {

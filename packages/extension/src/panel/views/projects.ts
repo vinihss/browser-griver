@@ -2,6 +2,7 @@ import { h, button, input } from "../dom.js"
 import { state, patch, setNotice } from "../state.js"
 import { loadProjects, loadRecipes } from "../api.js"
 import { setActiveProject } from "../messaging.js"
+import { esconderAvisoDeServidor } from "../server-notice.js"
 
 /**
  * Aba de ajustes: servidor e token.
@@ -46,7 +47,12 @@ export function settingsView(): HTMLElement {
           if (response.token) patch({ token: response.token })
           patch({ status: (response.status ?? "connecting") as never })
           setNotice("Conectando…")
-          if (response.status === "online") await refreshProjects()
+          if (response.status === "online") {
+            // o servidor voltou: a tela que bloqueia o painel sai
+            esconderAvisoDeServidor()
+            patch({ notice: undefined })
+            await refreshProjects()
+          }
         },
         { variant: "primary" },
       ),

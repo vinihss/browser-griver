@@ -1,24 +1,37 @@
 import type { ProjectSummary, Recipe, RecipeSummary, TargetKind } from "@griver/core"
 import { state } from "./state.js"
 
+/** Espera breve, sem travar o painel. */
+function espera(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /**
  * Pede ao service worker o token do servidor atual.
  *
  * O service worker busca o token no servidor a cada consulta e devolve o que
  * vale para ele: o token guardado pode ser de outro servidor, ou de antes de
  * o servidor trocar de token.
+ *
+ * A mensagem é repetida: o service worker pode estar dormindo, subindo ou
+ * ocupado com a renovação do token. Uma tentativa só já bastou para o
+ * painel ficar preso no token velho — e, com o token velho, ele abre vazio
+ * sem dizer o motivo.
  */
 async function tokenAtual(): Promise<string> {
-  try {
-    const response = (await chrome.runtime.sendMessage({ type: "panel:status" })) as {
-      token?: string
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      const response = (await chrome.runtime.sendMessage({ type: "panel:status" })) as {
+        token?: string
+      }
+      if (response?.token) {
+        state.token = response.token
+        return response.token
+      }
+    } catch {
+      // o service worker ainda não respondeu
     }
-    if (response?.token) {
-      state.token = response.token
-      return response.token
-    }
-  } catch {
-    // o service worker ainda não respondeu
+    await espera(200)
   }
   return state.token
 }
@@ -51,9 +64,12 @@ async function request<T>(path: string, init: RequestInit = {}, novaTentativa = 
     // 401: o token em uso não vale para o servidor atual. Renova e tenta de
     // novo uma vez — sem isso o painel abre vazio, sem dizer o motivo
     if (response.status === 401 && novaTentativa) {
-      const antigo = state.token
-      const novo = await tokenAtual()
-      if (novo && novo !== antigo) return await request<T>(path, init, false)
+      // a chamada é repetida mesmo que o token não tenha mudado: o service
+      // worker pode ter devolvido o token velho porque ainda estava Busy. Se
+      // o painel não repetir, ele fica preso no token velho e a lista
+      // permanece vazia até alguém recarregar a tela na mão
+      await tokenAtual()
+      return await request<T>(path, init, false)
     }
     throw new Error(body?.error ?? `HTTP ${response.status}`)
   }
@@ -98,6 +114,25 @@ export async function createProject(name: string, description?: string): Promise
 
 export async function deleteProject(id: string): Promise<void> {
   await request(`/api/projects/${id}`, { method: "DELETE" })
+}
+
+/**
+ * A URL da página em que o usuário está.
+ *
+ * É o `startUrl` da receita nova: o usuário não digita o endereço — a
+ * receita começa de onde ele está. A aba do painel e as páginas internas
+ * do navegador não contam.
+ */
+export async function urlCorrente(): Promise<string> {
+  try {
+    const response = (await chrome.runtime.sendMessage({ type: "panel:tab" })) as {
+      url?: string
+    }
+    const url = String(response?.url ?? "")
+    return /^(https?|file):/i.test(url) ? url : ""
+  } catch {
+    return ""
+  }
 }
 
 export async function loadRecipes(projectId?: string): Promise<RecipeSummary[]> {

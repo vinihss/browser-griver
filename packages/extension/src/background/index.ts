@@ -52,6 +52,40 @@ const ws = new WsClient({
   },
 })
 
+// ── aba da página ───────────────────────────────────────────────────────────
+
+/**
+ * A aba onde o usuário está trabalhando.
+ *
+ * A aba ativa nem sempre é a página: o painel pode estar aberto como aba
+ * (nos testes e quando alguém abre `panel.html` numa aba), e uma página
+ * interna do navegador (`chrome://`, Web Store) também não serve.
+ *
+ * Sem esse cuidado, a receita que começa com `navigate` navega o próprio
+ * painel — e o painel morre no meio da execução, sem lista, sem editor e
+ * sem cabeçalho.
+ *
+ * Quando a aba ativa não é uma página, a última aba de página que teve o
+ * foco é quem entra no lugar.
+ */
+async function abaDaPagina(): Promise<chrome.tabs.Tab | undefined> {
+  const [ativa] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (ativa?.id !== undefined && isPagina(ativa.url)) return ativa
+
+  const paginas = await chrome.tabs.query({ currentWindow: true })
+  const candidatas = paginas.filter((aba) => aba.id !== undefined && isPagina(aba.url))
+  if (candidatas.length === 0) return undefined
+
+  // a última que teve o foco primeiro; `lastAccessed` é a pista do Chrome
+  candidatas.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
+  return candidatas[0]
+}
+
+/** A URL é de uma página que dá para gravar e executar? */
+function isPagina(url: string | undefined): boolean {
+  return /^(https?|file):/i.test(url ?? "")
+}
+
 // ── ciclo de vida ───────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -185,7 +219,7 @@ chrome.runtime.onMessage.addListener((message: PanelMessage, sender, sendRespons
 
     case "panel:tab": {
       void (async () => {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+        const tab = await abaDaPagina()
         sendResponse({ ok: true, tabId: tab?.id, url: tab?.url, title: tab?.title })
       })()
       return true
@@ -252,10 +286,10 @@ async function handleOverlayAction(action: OverlayAction): Promise<void> {
   }
 }
 
-/** Começa a gravação na aba ativa. */
+/** Começa a gravação na aba da página. */
 async function startRecording(): Promise<void> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.id) throw new Error("nenhuma aba ativa")
+  const tab = await abaDaPagina()
+  if (!tab?.id) throw new Error("nenhuma aba de página aberta")
 
   if (!/^(https?|file):/i.test(tab.url ?? "")) {
     throw new Error(
@@ -362,9 +396,11 @@ async function openDraftInPanel(save = false): Promise<void> {
   const recipe = state.recordedRecipe
   if (!recipe) return
 
+  // salvar abre o modal: a receita inteira vai junto, senão os passos
+  // gravados se perdem no caminho
   broadcast(
     save
-      ? { type: "panel:openAddScript", url: recipe.startUrl ?? "" }
+      ? { type: "panel:openAddScript", recipe }
       : { type: "panel:openEditor", recipe },
   )
 }
@@ -480,7 +516,9 @@ async function handleRunRequest(
   driver: string | undefined,
   vars: Record<string, unknown> | undefined,
 ): Promise<void> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  // a aba da página, não a aba ativa: quando o painel está aberto como aba,
+  // a execução nela própria destrói o painel no primeiro `navigate`
+  const tab = await abaDaPagina()
   if (!tab?.id) return
 
   const events: StepEvent[] = []
@@ -530,14 +568,14 @@ async function handleServerMessage(message: { type: string; [key: string]: unkno
 
     case "run.request": {
       currentRunId = String(message.runId)
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      const tab = await abaDaPagina()
       if (!tab?.id) {
         ws.send({
           type: "run.result",
           runId: currentRunId,
           status: "error",
           events: [],
-          error: "nenhuma aba ativa",
+          error: "nenhuma aba de página aberta",
         })
         return
       }
@@ -595,14 +633,18 @@ interface PageCommandLike {
   payload?: Record<string, unknown>
 }
 
-/** Executa um comando na aba ativa e devolve o resultado. */
+/** Executa um comando na aba da página e devolve o resultado. */
 async function runPageCommand(request: PageCommandLike): Promise<{ ok: boolean; result?: unknown; error?: string }> {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-    if (!tab?.id) return { ok: false, error: "nenhuma aba ativa" }
+    const tab = await abaDaPagina()
+    if (!tab?.id) return { ok: false, error: "nenhuma aba de página aberta" }
 
     if (request.action === "screenshot") {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.id)
+      // `captureVisibleTab` recebe o id da janela, não o da aba
+      const dataUrl =
+        tab.windowId === undefined
+          ? await chrome.tabs.captureVisibleTab()
+          : await chrome.tabs.captureVisibleTab(tab.windowId)
       return { ok: true, result: { base64: dataUrl.split(",")[1], mimeType: "image/png" } }
     }
 

@@ -6,7 +6,7 @@
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "scripting", "tabs", "storage", "alarms", "webNavigation"],
   
-  "host_permissions": ["http://*/*", "https://*/*", "file:///*"],
+  "host_permissions": ["http://*/*", "https://*/*", "file:///*", "<all_urls>"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

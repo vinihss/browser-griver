@@ -81,6 +81,8 @@ declare namespace chrome {
       status?: string
       active?: boolean
       windowId?: number
+      /** quando a aba teve o foco pela última vez (Chrome 121+) */
+      lastAccessed?: number
     }
     interface TabChangeInfo {
       status?: string
@@ -96,7 +98,7 @@ declare namespace chrome {
     function get(tabId: number): Promise<Tab>
     function update(tabId: number, props: { url?: string; active?: boolean }): Promise<Tab>
     function sendMessage(tabId: number, message: unknown): Promise<unknown>
-    function captureVisibleTab(tabId?: number): Promise<string>
+    function captureVisibleTab(windowId?: number): Promise<string>
 
     const onUpdated: {
       addListener(
