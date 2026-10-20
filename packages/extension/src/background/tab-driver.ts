@@ -149,53 +149,89 @@ export class TabDriver implements Driver {
    * com o que comparar.
    */
   private async documentoAtual(): Promise<string | undefined> {
-    try {
-      const resposta = (await chrome.tabs.sendMessage(this.tabId, {
-        type: INTERNAL.pageCommand,
-        command: { action: "context" },
-      })) as { ok?: boolean; result?: { documento?: string } } | undefined
-      if (!resposta?.ok) return undefined
-      return resposta.result?.documento
-    } catch {
-      return undefined
-    }
+    return await documentoDaAba(this.tabId)
   }
 
   async close(): Promise<void> {
     // a aba do usuário permanece aberta
   }
 
-  /** Envia um passo ao content script e devolve o resultado. */
+  /**
+   * Envia um passo ao content script e devolve o resultado.
+   *
+   * A navegação é o caso difícil: quando a página muda com o passo no ar, o
+   * documento antigo morre junto com o content script, e a resposta nunca
+   * chega. O que fazer depende do passo — observar de novo é seguro,
+   * repetir uma escrita pode escrever duas vezes.
+   */
   private async send(command: Record<string, unknown>): Promise<unknown> {
+    const tipo = String(command.type ?? "")
+    const documentoAntes = await this.documentoAtual()
     try {
-      const response = (await chrome.tabs.sendMessage(this.tabId, {
-        type: INTERNAL.execute,
-        command: { step: command },
-      })) as { ok: boolean; result?: unknown; error?: string } | undefined
-
-      if (!response) throw new Error("sem resposta do content script")
-      if (!response.ok) throw new Error(response.error ?? "erro ao executar o passo")
-      return response.result
+      return await this.enviar(command)
     } catch (error) {
-      if (isDisconnected(error)) {
-        // a página recarregou e o content script sumiu: injeta de novo
-        await injectRecorder(this.tabId)
-        const retry = (await chrome.tabs.sendMessage(this.tabId, {
-          type: INTERNAL.execute,
-          command: { step: command },
-        })) as { ok: boolean; result?: unknown; error?: string } | undefined
-        if (!retry?.ok) throw new Error(retry?.error ?? "content script indisponível")
-        return retry.result
+      if (!isDisconnected(error)) {
+        throw error instanceof Error ? error : new Error(String(error))
       }
-      throw error instanceof Error ? error : new Error(String(error))
+
+      // O passo morreu com o documento. A página nova ainda está chegando:
+      // espera ela assentar e tenta de novo.
+      for (let tentativa = 0; tentativa < 10; tentativa++) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+
+        try {
+          await injectRecorder(this.tabId)
+        } catch {
+          // página que não aceita script (chrome://): tenta de novo no ciclo
+          continue
+        }
+
+        const documentoAgora = await this.documentoAtual()
+        const paginaNova = documentoAgora !== undefined && documentoAgora !== documentoAntes
+
+        if (!REPETIVEIS.has(tipo) && paginaNova) {
+          // A escrita já surtiu efeito — foi ela que provocou a navegação.
+          // A resposta é que não voltou: dar erro aqui derrubaria a
+          // execução de um passo que, na verdade, deu certo.
+          return undefined
+        }
+
+        try {
+          return await this.enviar(command)
+        } catch (erro) {
+          if (!isDisconnected(erro)) {
+            throw erro instanceof Error ? erro : new Error(String(erro))
+          }
+        }
+      }
+
+      throw new Error(
+        `a página navegou durante o passo "${tipo}" e a página nova não respondeu`,
+      )
     }
+  }
+
+  /** Uma ida ao content script, sem política de repetição. */
+  private async enviar(command: Record<string, unknown>): Promise<unknown> {
+    const response = (await chrome.tabs.sendMessage(this.tabId, {
+      type: INTERNAL.execute,
+      command: { step: command },
+    })) as { ok: boolean; result?: unknown; error?: string } | undefined
+
+    if (!response) throw new Error("sem resposta do content script")
+    if (!response.ok) throw new Error(response.error ?? "erro ao executar o passo")
+    return response.result
   }
 }
 
 /** Garante que o content script esteja presente na aba. */
 export async function injectRecorder(tabId: number): Promise<void> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: INTERNAL.pageCommand, command: { action: "context" } })
+    // o "documento" é o ping mais barato: só pergunta quem está na página
+    await chrome.tabs.sendMessage(tabId, {
+      type: INTERNAL.pageCommand,
+      command: { action: "documento" },
+    })
     return
   } catch {
     // a aba pode ter sido aberta antes da extensão: injeta o script agora
@@ -275,7 +311,7 @@ async function documentoDaAba(tabId: number): Promise<string | undefined> {
   try {
     const resposta = (await chrome.tabs.sendMessage(tabId, {
       type: INTERNAL.pageCommand,
-      command: { action: "context" },
+      command: { action: "documento" },
     })) as { ok?: boolean; result?: { documento?: string } } | undefined
     if (!resposta?.ok) return undefined
     return resposta.result?.documento
@@ -285,11 +321,25 @@ async function documentoDaAba(tabId: number): Promise<string | undefined> {
   }
 }
 
+/**
+ * Passos que podem ser repetidos sem efeito colateral.
+ *
+ * Observar a página de novo não muda nada: `waitFor`, `extract` e `assert`
+ * podem ser refeitos no documento novo. Escrever não: repetir um `click`
+ * ou um `fill` depois da navegação clica duas vezes.
+ */
+const REPETIVEIS = new Set(["wait", "waitFor", "extract", "assert", "currentUrl"])
+
 function isDisconnected(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return (
     message.includes("Receiving end does not exist") ||
     message.includes("message port closed") ||
-    message.includes("Extension context invalidated")
+    message.includes("Extension context invalidated") ||
+    // o Chrome fechou o canal porque o documento morreu com a navegação:
+    // "A listener indicated an asynchronous response by returning true, but
+    // the message channel closed before a response was received."
+    message.includes("message channel closed") ||
+    message.includes("Execution context was destroyed")
   )
 }

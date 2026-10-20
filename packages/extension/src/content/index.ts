@@ -26,7 +26,7 @@ interface ExecuteCommand {
 }
 
 interface PageCommand {
-  action: "context" | "click" | "fill" | "evaluate" | "screenshot" | "navigate"
+  action: "context" | "documento" | "click" | "fill" | "evaluate" | "screenshot" | "navigate"
   payload?: Record<string, unknown>
 }
 
@@ -153,6 +153,10 @@ async function runPageCommand(command: PageCommand): Promise<unknown> {
   switch (command.action) {
     case "context":
       return pageContext()
+    case "documento":
+      // só a identidade do documento: o driver usa isso para saber se a
+      // página navegou, sem pagar o custo de montar o retrato inteiro
+      return { documento: DOCUMENTO }
     case "click":
       executor.click(command.payload?.target as never, command.payload?.options as never)
       return { ok: true }
