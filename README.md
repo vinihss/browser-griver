@@ -72,7 +72,8 @@ pnpm dev:server
 
 O painel lateral mostra **uma tela por vez**, alternada pelos botões do
 cabeçalho: **☰ Receitas**, **✦ Chat** e **⚙ Ajustes**. O **+** abre o modal
-*Add New Script* (nome e URL — a URL vira o `startUrl` da receita).
+*Add New Script* (só o nome — a URL é a da página em que você está, e vira o
+`startUrl` da receita).
 
 **Receitas** — lista as receitas do servidor, todas elas, sem filtro de
 projeto. Cada linha traz o título e dois botões: **✎** edita e **▶** executa
@@ -85,8 +86,10 @@ selecionada, com estes botões:
 - *Exportar* — copia o código Playwright/Firecrawl gerado
 - *Remover* — apaga a receita
 
-O botão **● Gravar**, no topo da seção, não é uma tela: ele injeta um
-**overlay na própria página**, e é de lá que a gravação é controlada:
+O botão **● Gravar** aparece quando há uma receita aberta — editando uma ou
+criando uma nova — porque é ela que recebe os passos gravados. Ele não é uma
+tela: injeta um **overlay na própria página**, e é de lá que a gravação é
+controlada:
 
 1. Abra a página e clique em **● Gravar**
 2. Interaja normalmente — cliques, digitação, seleções e teclas são capturados
@@ -94,7 +97,7 @@ O botão **● Gravar**, no topo da seção, não é uma tela: ele injeta um
 4. **⏺ / ⏸** na barra pausa e retoma a captura sem perder o contexto
 5. **⏹ Stop** encerra e deixa a receita pronta
 6. **✎** ao lado de *Steps* abre o rascunho no editor do painel
-7. **Save** no overlay abre o modal *Add New Script* com a URL da gravação
+7. **Save** no overlay abre o modal *Add New Script* com a receita gravada
 
 O overlay sobrevive a navegações: o estado da gravação mora no service worker,
 não na página. É por isso que o primeiro passo — quase sempre a URL inicial —
@@ -226,6 +229,45 @@ Quem tem dono vivo fica intacto. O limpador também se poupa: um servidor que
 foi started por um processo que já morreu é órfão, mas o dono dele é ele
 mesmo — e a limpeza não derruba a si próprio.
 
+### O servidor detached
+
+Um servidor em `setsid` (ou `&` de um script que já terminou) sobrevive a
+quem o started: ele está na sessão dele, e o shell que o mandou já foi
+embora. Para esses casos, quem sobe o servidor diz por herança quem é o
+dono:
+
+```sh
+GRIVER_CRIADOR=$$ setsid griver serve &
+```
+
+Sem essa herança, o servidor só descobre o dono pelo `/proc` — e o `/proc`
+não lembra de quem era filho um processo que já foi reparentado para o init.
+Quando o dono morre na largada (um script que sobe o servidor e sai), o
+servidor fica órfão sem ninguém para derrubar.
+
+### A pasta de dados
+
+Todos — servidor, CLI e extensão — usam a mesma pasta: `<projeto>/data`.
+Ela sai do diretório de onde o processo foi chamado, então o servidor precisa
+subir a partir da raiz do projeto:
+
+```sh
+cd /home/vinicius/browser-griver && pnpm dev:server
+```
+
+Quem sobe por systemd aponta a pasta explicitamente, para não depender do
+diretório de trabalho da unidade:
+
+```ini
+[Service]
+WorkingDirectory=/home/vinicius/browser-griver
+Environment=GRIVER_DATA_DIR=/home/vinicius/browser-griver/data
+ExecStart=/home/vinicius/browser-griver/node_modules/.bin/tsx packages/server/src/main.ts
+```
+
+Com a pasta errada, o servidor sobe com um token e o CLI procura outro — e
+toda chamada leva 401.
+
 ## O assistente de IA
 
 O chat usa o **servidor local do OpenCode** como motor. O agente `griver`
@@ -281,10 +323,31 @@ são tratadas pelo próprio service worker porque recarregam a página.
 
 ```sh
 pnpm test                                       # testes do core e do servidor
+pnpm test:e2e:all                               # a suíte inteira da extensão
+pnpm test:e2e:headless                          # a mesma suíte, sem tela
 pnpm test:e2e:painel                            # gravar, salvar e executar pela UI
 pnpm test:e2e:uso                               # projetos, execução e chat de ponta a ponta
 pnpm test:e2e:browser                           # ciclo completo no Chromium
 pnpm test:e2e:chat                              # o assistente edita a receita
+```
+
+### Os e2e sem tela
+
+Os e2e abrem um Chromium de verdade e carregam a extensão nele. O
+Playwright tem dois Chromium: o *headless shell*, que é o padrão do
+`headless: true` e **não carrega extensão nenhuma**, e o Chromium completo,
+que carrega a extensão MV3 em headless como qualquer outro. A diferença é
+o `channel: "chromium"` — sem ele, o service worker da extensão nunca
+aparece e o teste morre fingindo que a extensão não carregou.
+
+Por isso os e2e rodam **headless por padrão**: o Chrome de verdade depende
+de um X server e morre sozinho quando o Xwayland engasga — o teste falha
+com "Target page, context or browser has been closed", sem dizer que o
+culpado é o navegador. No headless a suíte é determinística e não
+precisa de tela nenhuma (CI, sessão sem Wayland, `sudo` sem display).
+
+```sh
+GRIVER_HEADLESS=0 pnpm test:e2e:all   # o Chrome de verdade: exige tela
 ```
 
 O teste do painel usa a interface como uma pessoa: escolhe o projeto, grava um

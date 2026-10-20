@@ -55,14 +55,18 @@ echo "========================================="
 fuser -k 7331/tcp 2>/dev/null || true
 sleep 1
 
-# Inicia o servidor usando pnpm exec from the server package directory
-# A chave é usar o working directory correto para resolução de módulos
-cd /home/vinicius/browser-griver/packages/server
-pnpm exec tsx src/main.ts &
-SERVER_PID=$!
-
-# Volta ao diretório raiz
+# Inicia o servidor a partir da raiz do projeto.
+#
+# A pasta de dados é resolvida a partir do diretório atual: rodar dentro de
+# packages/server cria o banco e o token em packages/server/data, e o CLI e
+# o plugin do OpenCode procuram em <projeto>/data. Com os dois em pastas
+# diferentes, o servidor sobe com um token e a extensão recebe 401.
+#
+# A resolução dos módulos do workspace não depende do diretório: o tsx
+# procura o @griver/core a partir do arquivo, não de onde ele foi chamado.
 cd /home/vinicius/browser-griver
+pnpm exec tsx packages/server/src/main.ts &
+SERVER_PID=$!
 
 # Aguarda o servidor estar pronto
 sleep 3

@@ -81,7 +81,7 @@ A gravação acontece **dentro da página**, num overlay injetado.
 2. **☰ / ✦ / ⚙** no cabeçalho → alterna entre Receitas, Chat e Ajustes
 3. **✎ numa receita** → carrega a receita no editor (JSON) abaixo da lista
 4. **▶ numa receita** → executa na aba atual
-5. **+ no cabeçalho** → abre o modal "Add New Script" (Name + URL)
+5. **+ no cabeçalho** → abre o modal "Add New Script" (só Name)
 
 ### Fluxo de gravação:
 
@@ -90,7 +90,7 @@ A gravação acontece **dentro da página**, num overlay injetado.
 3. **⏸ / ⏺** na barra → pausa e retoma a captura
 4. **⏹ Stop** → a gravação para e a receita fica pronta
 5. **✎** ao lado de "Steps" → abre o rascunho no editor do painel
-6. **Save** no overlay → abre o modal "Add New Script" com a URL da gravação
+6. **Save** no overlay → abre o modal "Add New Script" com a receita gravada
 
 > O overlay sobrevive a navegações: o estado da gravação mora no service
 > worker, não na página. É por isso que o primeiro passo de uma receita — que
@@ -122,8 +122,9 @@ bash start-all.sh
 
 1. Clique no ícone do Griver para abrir o painel
 2. Clique no botão **+** do cabeçalho
-3. Preencha **Name** e **URL**
-   - a URL vira o `startUrl` da receita — a página onde ela começa
+3. Preencha **Name**
+   - a URL da página em que você está vira o `startUrl` da receita — a página
+     onde ela começa
 4. Clique em **Save**
 5. A receita aparece na lista de Receitas
 
@@ -147,7 +148,8 @@ projeto padrão chamado "Meus scripts" (criado uma única vez).
 ### 4. **Criando uma Receita do Zero**
 
 1. Clique no botão **+** do cabeçalho
-2. Preencha **Name** e **URL**
+2. Preencha **Name**
+   - a URL da página em que você está vira o `startUrl` da receita
 3. Clique em **Save**
 4. A receita é criada vazia e o editor de código abre com o JSON
 5. Escreva os passos da receita
@@ -311,7 +313,8 @@ conectadas ao mesmo servidor: feche as outras abas do Chrome.
 
 O painel tem **uma tela por vez**, alternada pelos botões do cabeçalho. O
 `+` abre o modal; o **☰** traz a lista de receitas; o **✦** o chat; o **⚙** os
-ajustes. O botão **● Gravar** fica na seção de Receitas.
+ajustes. O botão **● Gravar** fica na seção de Receitas, e só aparece quando
+há uma receita aberta — é ela que recebe os passos gravados.
 
 A gravação não vive no painel: ela vira um **overlay dentro da página**, e é
 de lá que se controla a captura.
