@@ -11,6 +11,11 @@ echo ""
 echo "1️⃣ Building @griver/core..."
 pnpm --filter @griver/core run build
 
+# Step 1b: Typecheck da extensão (pega função indefinida antes do build)
+echo ""
+echo "1b️⃣ Typechecking @griver/extension..."
+pnpm --filter @griver/extension exec tsc --noEmit -p tsconfig.json
+
 # Step 2: Build extension
 echo ""
 echo "2️⃣ Building @griver/extension..."
@@ -93,6 +98,10 @@ echo "1. Abra o Chrome e vá em chrome://extensions/"
 echo "2. Ative 'Modo de desenvolvedor' (toggle no canto superior direito)"
 echo "3. Clique em 'Carregar extensão não compactada'"
 echo "4. Selecione: packages/extension/dist/"
+echo ""
+echo "💡 Dica: Se já tiver a extensão instalada anteriormete,"
+echo "   clique no botão 'Reload' (seta circular) ao lado da extensão"
+echo "   para carregar as novas alterações sem remover a extensão."
 echo ""
 echo "💡 A extensão conectará automaticamente ao servidor"
 echo "   e projetos gravados serão carregados ao abrir o painel!"
