@@ -195,7 +195,7 @@ test("só a raiz da cadeia é reapeada", () => {
   )
 })
 
-test("encerrarOrfaos mata só os órfãos", () => {
+test("encerrarOrfaos mata só os órfãos", async () => {
   const processos = [
     processo({ pid: 500, cmdline: "zsh -c start-all.sh" }),
     processo({
@@ -214,16 +214,21 @@ test("encerrarOrfaos mata só os órfãos", () => {
   ]
 
   const mortos: number[] = []
-  const orfaos = encerrarOrfaos(leitorDe(processos), (alvo) => {
-    mortos.push(alvo)
-  })
+  const orfaos = await encerrarOrfaos(
+    leitorDe(processos),
+    (alvo) => {
+      mortos.push(alvo)
+    },
+    // o servidor honrou o pedido e saiu: não precisa de SIGKILL
+    { esperaParaSigKillMs: 0, vivo: () => false },
+  )
 
   assert.deepEqual(orphans(orfaos), [502])
   // alvo negativo é o grupo: o pnpm, o tsx e o node caem juntos
   assert.deepEqual(mortos, [-502], "só o órfão pode ser morto, e o grupo inteiro vai junto")
 })
 
-test("o grupo cai junto com a raiz", () => {
+test("o grupo cai junto com a raiz", async () => {
   const processos = [
     processo({
       pid: 700,
@@ -236,14 +241,50 @@ test("o grupo cai junto com a raiz", () => {
   ]
 
   const mortos: number[] = []
-  encerrarOrfaos(leitorDe(processos), (alvo) => {
-    mortos.push(alvo)
-  })
+  await encerrarOrfaos(
+    leitorDe(processos),
+    (alvo) => {
+      mortos.push(alvo)
+    },
+    { esperaParaSigKillMs: 0, vivo: () => false },
+  )
 
   assert.deepEqual(mortos, [-700], "derrubar a raiz é derrubar o grupo")
 })
 
-test("o servidor não derruba a si mesmo", () => {
+test("quem ignora o SIGTERM leva SIGKILL", async () => {
+  // um servidor preso no close() não sai no pedido: ele fica segurando a porta
+  const processos = [
+    processo({
+      pid: 800,
+      ppid: 1,
+      sessao: 800,
+      grupo: 800,
+      cmdline: "node packages/server/src/main.ts",
+      cwd: "/repo/packages/server",
+    }),
+  ]
+
+  const sinais: { alvo: number; sinal: NodeJS.Signals }[] = []
+  await encerrarOrfaos(
+    leitorDe(processos),
+    (alvo, sinal) => {
+      sinais.push({ alvo, sinal })
+    },
+    { esperaParaSigKillMs: 0, vivo: () => true },
+  )
+
+  assert.deepEqual(
+    sinais,
+    [
+      { alvo: -800, sinal: "SIGTERM" },
+      { alvo: -800, sinal: "SIGKILL" },
+    ],
+    "primeiro o pedido, e o SIGKILL para quem não saiu",
+  )
+})
+
+test("o servidor não derruba a si mesmo", async () => {
   // eu sou o servidor: o meu processo está na lista e o meu criador morreu
   const eu = processo({
     pid: process.pid,
@@ -255,9 +296,13 @@ test("o servidor não derruba a si mesmo", () => {
   })
 
   const mortos: number[] = []
-  const orfaos = encerrarOrfaos(leitorDe([eu]), (alvo) => {
-    mortos.push(alvo)
-  })
+  const orfaos = await encerrarOrfaos(
+    leitorDe([eu]),
+    (alvo) => {
+      mortos.push(alvo)
+    },
+    { esperaParaSigKillMs: 0, vivo: () => false },
+  )
 
   assert.deepEqual(orphans(orfaos), [], "o servidor não é órfão de si mesmo")
   assert.deepEqual(mortos, [], "a limpeza não pode derrubar quem está limpando")

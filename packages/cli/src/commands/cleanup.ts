@@ -10,11 +10,11 @@ import { encerrarOrfaos, servidoresOrfaos } from "@griver/server/orfaos"
  * Só morre o que não tem dono: um servidor com dono vivo (o shell que o
  * pediu ainda está de pé) fica intacto.
  */
-export async function commandCleanup(rest: string[], json: boolean): Promise<number> {
+export async function commandCleanup(_rest: string[], json: boolean): Promise<number> {
+  // a lista de órfãos já é a lista dos que estão de pé: zumbi não conta
   const orfaos = servidoresOrfaos()
-  const vivos = orfaos.filter((processo) => processo.estado !== "Z")
 
-  if (vivos.length === 0) {
+  if (orfaos.length === 0) {
     if (json) {
       console.log(JSON.stringify({ encerrados: [] }, null, 2))
     } else {
@@ -23,7 +23,7 @@ export async function commandCleanup(rest: string[], json: boolean): Promise<num
     return 0
   }
 
-  const encerrados = encerrarOrfaos()
+  const encerrados = await encerrarOrfaos()
 
   if (json) {
     console.log(

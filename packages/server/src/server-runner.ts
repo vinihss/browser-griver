@@ -32,7 +32,7 @@ export async function runServer(overrides: Partial<ServerConfig> = {}): Promise<
   // servidor que sobrou de uma execução anterior: o shell que o started
   // morreu e ele ficou de pé, segurando a porta e a memória. Antes de
   // pegar a porta, ele sai da frente.
-  const orfaos = encerrarOrfaos()
+  const orfaos = await encerrarOrfaos()
   if (orfaos.length > 0) {
     console.log(`servidores órfãos encerrados: ${orfaos.map((orfao) => orfao.pid).join(", ")}`)
     await esperarLiberacao(orfaos.map((orfao) => orfao.pid))

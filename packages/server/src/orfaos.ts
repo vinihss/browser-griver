@@ -172,6 +172,14 @@ export function minhaCadeia(leitor: Leitor = leitorDoSistema): number[] {
   return cadeia
 }
 
+/** Opções do encerramento dos órfãos. */
+export interface EncerrarOpcoes {
+  /** quanto tempo o órfão tem para sair depois do SIGTERM (ms) */
+  esperaParaSigKillMs?: number
+  /** diz se o processo continua de pé */
+  vivo?: (pid: number) => boolean
+}
+
 /**
  * Encerra os servidores órfãos.
  *
@@ -180,9 +188,13 @@ export function minhaCadeia(leitor: Leitor = leitorDoSistema): number[] {
  * tsx, o pnpm) que precisam cair com ele, senão um dos filhos continua
  * segurando a porta.
  *
+ * O SIGKILL não é exagero: um servidor preso no `close()` — esperando uma
+ * conexão keep-alive que não vem — ignora o SIGTERM e continua segurando a
+ * porta. A espera é o prazo do bom; depois dela, o processo é derrubado.
+ *
  * @param matar recebe o alvo: negativo é o grupo inteiro, positivo é o pid
  */
-export function encerrarOrfaos(
+export async function encerrarOrfaos(
   leitor: Leitor = leitorDoSistema,
   matar: (alvo: number, sinal: NodeJS.Signals) => void = (alvo, sinal) => {
     try {
@@ -191,13 +203,34 @@ export function encerrarOrfaos(
       // já morreu
     }
   },
-): ProcessoInfo[] {
+  opcoes: EncerrarOpcoes = {},
+): Promise<ProcessoInfo[]> {
+  const { esperaParaSigKillMs = 3000, vivo = (pid: number) => estaVivo(leitor.info(pid)) } = opcoes
+
   const meus = new Set(minhaCadeia(leitor))
   const orfaos = servidoresOrfaos(leitor).filter((orfao) => !meus.has(orfao.pid))
   for (const orfao of orfaos) {
     // sou o líder do grupo: derrubar o grupo derruba a cadeia toda
-    const alvo = orfao.grupo === orfao.pid ? -orfao.grupo : orfao.pid
-    matar(alvo, "SIGTERM")
+    matar(alvoDoOrfao(orfao), "SIGTERM")
+  }
+  if (orfaos.length === 0) return orfaos
+
+  // o prazo do bom: quem honrou o pedido já saiu
+  await espera(esperaParaSigKillMs)
+
+  for (const orfao of orfaos) {
+    if (!vivo(orfao.pid)) continue
+    matar(alvoDoOrfao(orfao), "SIGKILL")
   }
   return orfaos
+}
+
+/** O alvo do sinal: o grupo inteiro quando o órfão lidera o grupo. */
+function alvoDoOrfao(orfao: ProcessoInfo): number {
+  return orfao.grupo === orfao.pid ? -orfao.grupo : orfao.pid
+}
+
+/** Espera um tempo, em milissegundos. */
+function espera(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
