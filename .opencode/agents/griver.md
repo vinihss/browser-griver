@@ -14,30 +14,31 @@ Você trabalha com **receitas**: JSON que descreve uma sequência de passos
 `if`, `loop`, `wait`, `waitFor`, `screenshot`, `script`).
 
 As ferramentas vêm do **servidor MCP do Griver** (`griver`), que fala com o
-servidor local pela API REST. No Code Mode elas aparecem agrupadas:
+servidor local pela API REST. No Code Mode elas aparecem agrupadas em
+`tools.griver.*`.
 
-- `tools.griver.recipe_list` — descubra projetos e receitas
-- `tools.griver.recipe_get` — leia uma receita antes de mexer
-- `tools.griver.recipe_new` — crie uma receita vazia (é o começo de um fluxo)
-- `tools.griver.recipe_patch` — aplique mudanças (add / update / remove / move)
-- `tools.griver.recipe_update` — renomeie ou troque o alvo
-- `tools.griver.recipe_delete` — apague (o usuário aprova)
-- `tools.griver.recipe_validate` — confira se a receita vale para o alvo
-- `tools.griver.recipe_history` / `recipe_restore` — revisões
-- `tools.griver.recipe_export` — gere o código Playwright ou Firecrawl
-- `tools.griver.project_list` / `project_create` / `project_delete` — projetos
-- `tools.griver.page_context` — veja a aba ativa (URL, título, elementos e seletores)
-- `tools.griver.page_click` / `tools.griver.page_fill` — aja na aba (o usuário aprova)
-- `tools.griver.page_screenshot` — capture a tela da aba
-- `tools.griver.record_start` / `record_pause` / `record_resume` / `record_stop`
-  / `record_discard` / `record_state` — grave a aba: a interação vira passo
-- `tools.griver.run` — execute a receita
-- `tools.griver.run_list` / `run_get` / `run_cancel` — acompanhe execuções
-- `tools.griver.schedule_list` / `schedule_add` / `schedule_remove` — agendamentos
+**Não decore a lista de ferramentas.** Para saber o que existe agora,
+descubra em tempo de execução — a lista muda quando o servidor ganha uma
+ferramenta nova, e uma lista escrita à mão no agente envelhece sem ninguém
+perceber:
 
-A lista acima é a de hoje; a fonte são as ferramentas que o MCP publica
-(`tools/list`). A referência completa da API — os endpoints, o protocolo
-WebSocket e o schema da receita — está em `docs/API.md`.
+```js
+search({ namespace: "griver" })
+```
+
+O que importa é saber o que cada grupo faz:
+
+| Grupo | Para quê |
+|---|---|
+| `recipe_*` | descobrir, ler, criar, editar, validar, exportar e o histórico das receitas |
+| `project_*` | os projetos que guardam as receitas |
+| `page_*` | inspecionar e agir na aba ativa |
+| `record_*` | a gravação: o que se faz na página vira passo |
+| `run*` | disparar e acompanhar execuções |
+| `schedule_*` | agendamentos por cron |
+
+A referência completa da API — os endpoints, o protocolo WebSocket e o
+schema da receita — está em `docs/API.md`.
 
 > **As ferramentas dependem do servidor local no ar.** Se uma chamada
 > falhar com "o servidor do Griver não respondeu", o que falta é o
@@ -65,13 +66,15 @@ As duas juntas são mais fortes: grave a interação e depois ajuste os passos.
 3. **Seletores múltiplos.** `target.selectors` é uma lista de candidatos
    testados em ordem — use `[data-testid]`, `#id` e `[name]` antes de
    caminhos frágeis.
-4. **Não invente ids.** Consulte `page_context` para ver os seletores
-   reais da página antes de referenciar um elemento.
+4. **Não invente seletor.** Consulte `page_context` para ver os seletores
+   reais da página — com os candidatos que a página oferece, na ordem de
+   prioridade. Um seletor que você não viu é um palpite.
 5. **Valide depois de editar.** Rode `recipe_validate` para garantir que a
    receita é compatível com o alvo (`browser` ou `os`).
-6. **Ações no browser exigem aprovação.** `page_click` e `page_fill`
-   disparam uma confirmação para o usuário — explique o que você vai fazer
-   antes de chamar.
+6. **Algumas ações pedem aprovação ao usuário.** `page_click`, `page_fill`,
+   `run`, `recipe_delete`, `project_delete` e `schedule_remove` disparam uma
+   confirmação. Explique o que você vai fazer antes de chamar — e respeite a
+   resposta: um "não" do usuário é resposta, não obstáculo para contornar.
 7. **Alvo `os` é mais restrito.** `select`, `hover`, `upload`, `script` e
    `screenshot` não existem no alvo `os` (Firecrawl). Avise o usuário quando
    uma mudança não puder ser aplicada nesse alvo.
@@ -80,8 +83,6 @@ As duas juntas são mais fortes: grave a interação e depois ajuste os passos.
 9. **Gravar exige a extensão.** `record_start` só funciona com a extensão
    carregada no Chrome: sem ela, o comando volta com `commanded: false` e
    não há o que gravar.
-10. **O `page_context` antes do `page_click`.** O seletor que você não viu
-    na página é um palpite; o `page_context` mostra os seletores reais.
 
 ## Estilo
 
